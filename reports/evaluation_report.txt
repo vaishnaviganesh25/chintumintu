@@ -1,0 +1,204 @@
+
+==============================================================================
+FINGUARD MODULE 2 - PREDICTIVE ML ENGINE
+==============================================================================
+Loaded 100,000 transactions from upi_synthetic_data.csv
+Period      : 2026-07-11 00:02:26 -> 2026-08-09 23:55:54
+Class balance: 500 fraud / 99,500 legitimate (0.500% positive, 1:199 ratio)
+Dropped before training: transaction_id, timestamp, sender_vpa, receiver_vpa, fraud_pattern
+  (`fraud_pattern` is label-derived metadata from Module 1 - keeping it would leak the target)
+
+Engineered 33 features: 16 numeric, 14 binary, 3 categorical
+  numeric    : hour_of_day, day_of_week, hour_sin, hour_cos, amount, log_amount, receiver_vpa_age_days, log_receiver_vpa_age, time_since_last_txn_sec, log_time_since_last, receiver_local_len, sender_local_len, receiver_digit_ratio, prev_amount, log_prev_amount, prev_amount_ratio
+  binary     : is_night_txn, is_weekend, is_micro_payment, is_round_amount, is_new_receiver_vpa, is_recent_receiver_vpa, is_first_txn, is_rapid_txn, sender_vpa_is_mobile, receiver_vpa_is_mobile, receiver_starts_with_digit, receiver_is_merchant_like, receiver_has_suspicious_keyword, same_receiver_as_prev
+  categorical: sender_bank_handle, receiver_bank_handle, sender_city
+
+==============================================================================
+DATA SPLITS (stratified)
+==============================================================================
+  train        64,000 rows    320 fraud   0.500%
+  validation   16,000 rows     80 fraud   0.500%
+  test         20,000 rows    100 fraud   0.500%
+  Validation exists so early stopping and threshold calibration never see the test set.
+
+Preprocessed matrix: 118 columns after one-hot encoding
+
+==============================================================================
+TRAINING
+==============================================================================
+XGBoost      : scale_pos_weight = 63680/320 = 199.0
+               early stopping at 134 trees (best validation aucpr = 0.9901)
+RandomForest : class_weight = 'balanced_subsample', 400 trees
+
+==============================================================================
+MODEL SELECTION - 5-fold cross-validated PR-AUC
+==============================================================================
+PR-AUC is the honest summary under 0.5% prevalence; ROC-AUC looks flattering
+no matter what you do here. The preprocessor is refitted inside each fold.
+
+  XGBoost        PR-AUC 0.9872 +/- 0.0046   folds: 0.9792, 0.9891, 0.9909, 0.9852, 0.9915
+  RandomForest   PR-AUC 0.9873 +/- 0.0043   folds: 0.9897, 0.9828, 0.9865, 0.9831, 0.9942
+
+==============================================================================
+MODEL COMPARISON
+==============================================================================
+Model           PR-AUC(cv)  PR-AUC(val)  PR-AUC(test)  ROC-AUC(test)   F1(test)   Recall  Precision
+---------------------------------------------------------------------------------------------------
+XGBoost             0.9872       0.9901        0.9946         1.0000     0.9596   0.9500     0.9694
+RandomForest        0.9873       0.9873        0.9955         1.0000     0.9495   0.9400     0.9592
+
+Selected: RandomForest  (cross-validated PR-AUC 0.9873 +/- 0.0043)
+
+==============================================================================
+DECISION THRESHOLD CALIBRATION
+==============================================================================
+Active policy: minimise expected rupee loss subject to recall >= 90%,
+pricing a missed fraud at its transaction amount and a false alarm at Rs.150.
+Calibrated on 5-fold out-of-fold probabilities over train+validation
+(~400 positives), never on the test set.
+
+  Shipped threshold         : 0.1230
+  Precision-at-recall point : 0.6567  (recall 0.9125, precision 0.9605 out-of-fold)
+  Cost-optimal point        : 0.1230  (recall 1.0000, expected loss Rs.27,450)
+  F1-optimal threshold      : 0.5768 (F1 = 0.9521)
+  Single-split alternative  : 0.6887  (what the 80-positive validation split alone would have suggested)
+  Default baseline          : 0.50
+
+  Out-of-fold comparison (400 fraud rows, the largest sample available):
+                                Precision   Recall       F1   Alarms  Missed   Expected loss
+    default 0.50                   0.8934   0.9850   0.9370       47       6      Rs.119,576
+    precision-at-recall 0.6567     0.9605   0.9125   0.9359       15      35      Rs.824,550
+    cost-optimal 0.1230            0.6861   1.0000   0.8138      183       0       Rs.27,450
+
+  Why the two policies disagree, and why 'cost' is the one shipping:
+  the 90% recall floor sits below what this model achieves, so
+  'maximise precision' is free to climb the threshold until it hits the floor.
+  Out-of-fold that buys +27.4% precision and +168 alarms,
+  at the price of +35 fraud rows let through.
+  Priced in rupees the trade is negative by Rs.797,100: a missed mule
+  transfer costs its full amount, a false alarm costs one Rs.150 review.
+  Active policy is 'cost' (set THRESHOLD_POLICY at the top of this
+  file to switch). Raising TARGET_RECALL has much the same effect.
+
+==============================================================================
+TEST SET EVALUATION - RandomForest
+==============================================================================
+  A) DEFAULT THRESHOLD  (threshold = 0.5000)
+                          Predicted
+                     Legitimate      Fraud
+    Actual Legitimate     19,890         10      <- false alarms: 10
+           Fraud               0        100      <- fraud missed: 0
+    Precision 0.9091   Recall 1.0000   F1 0.9524
+
+  B) CALIBRATED THRESHOLD  (threshold = 0.1230)
+                          Predicted
+                     Legitimate      Fraud
+    Actual Legitimate     19,850         50      <- false alarms: 50
+           Fraud               0        100      <- fraud missed: 0
+    Precision 0.6667   Recall 1.0000   F1 0.8000
+
+  Moving 0.50 -> 0.1230: fraud caught 100 -> 100 (+0), false alarms 10 -> 50 (+40)
+
+  Note: on this particular test split the default threshold scores higher.
+  With 100 fraud rows and 10 false positive(s) in the whole split, that
+  comparison is noise - the precision gain the calibrated threshold buys
+  out-of-fold simply has no room to show up here. The threshold was not
+  re-tuned to fix this, because tuning against the test set is precisely
+  the error the three-way split exists to prevent. The recall floor still
+  holds (100% >= 90%), which is the contract the policy promises.
+
+  Threshold-independent (ranking quality):
+    ROC-AUC : 1.0000
+    PR-AUC  : 0.9955   (a random model would score 0.0050)
+
+==============================================================================
+BUSINESS IMPACT (test set, calibrated threshold)
+==============================================================================
+  Fraud value at risk    : Rs.   3,736,080
+  Fraud value blocked    : Rs.   3,736,080  (100.0% of rupees at risk)
+  Fraud value leaked     : Rs.           0
+  Alerts per 100k txns   :          750
+  Micro-payment (<=Rs.500) false alarms: 2 of 14,133 (0.0142%)
+  (The micro-payment line is the customer-experience guardrail: chai and
+   auto-rickshaw payments must not get declined to buy a little more recall.)
+
+==============================================================================
+RECALL BY SCAM SIGNATURE (test set, calibrated threshold)
+==============================================================================
+  Signature                         Fraud  Caught   Recall   Value at risk
+  ----------------------------------------------------------------------
+  new_vpa_velocity                     24      24  100.00%    Rs.1,362,050
+  odd_hour_phishing                    31      31  100.00%    Rs.1,127,570
+  rupee_1_test (Rs.1 probe leg)        21      21  100.00%           Rs.21
+  rupee_1_test (large leg)             24      24  100.00%    Rs.1,246,439
+
+==============================================================================
+SPLIT INTEGRITY - do scam incidents straddle train and test?
+==============================================================================
+  Test fraud rows whose receiver VPA also appears in training fraud: 59/100 (59.0%)
+  Recall on those 'warm' receivers      : 100.00%
+  Recall on 'cold' receivers (41 rows, never seen): 100.00%
+
+  A stratified random split cuts through scam incidents - a Rs.1 probe can sit in
+  train while its large follow-up sits in test, and one mule VPA is scattered across
+  both. The cold-receiver recall is the fairer estimate for a brand-new scam ring.
+  Switching to a group-aware split (grouped on receiver_vpa) would remove the effect
+  entirely; the stratified split was kept because it is what the module specifies.
+
+==============================================================================
+ABLATION - how much rests on receiver VPA age?
+==============================================================================
+  Dropped: receiver_vpa_age_days, log_receiver_vpa_age, is_new_receiver_vpa, is_recent_receiver_vpa
+                            PR-AUC    Recall   Precision        F1
+  Full feature set          0.9955    1.0000      0.6667    0.8000
+  Without VPA age           0.9520    0.9200      0.8214    0.8679
+
+  Every fraudulent receiver in the synthetic data is 0-20 days old, so this
+  feature will always carry real signal here. Module 1 deliberately routes a
+  slice of ordinary traffic - and a thin tail of genuine big-ticket payments -
+  to brand-new VPAs, so account age is no longer separable on its own: the
+  rule 'receiver is 20 days old or younger' is only ~7% precise on this data.
+  The gap above is what the temporal, velocity and VPA-structure features
+  deliver alone, and is the better guide to behaviour on real traffic.
+
+==============================================================================
+TOP FEATURE IMPORTANCES
+==============================================================================
+  num__receiver_vpa_age_days                  0.1656  ########################################
+  num__amount                                 0.1506  ####################################
+  num__log_amount                             0.1434  ##################################
+  num__log_receiver_vpa_age                   0.1417  ##################################
+  bin__is_recent_receiver_vpa                 0.0947  ######################
+  bin__receiver_is_merchant_like              0.0463  ###########
+  num__prev_amount_ratio                      0.0416  ##########
+  bin__is_new_receiver_vpa                    0.0267  ######
+  bin__is_micro_payment                       0.0240  #####
+  num__hour_of_day                            0.0188  ####
+  bin__same_receiver_as_prev                  0.0181  ####
+  num__time_since_last_txn_sec                0.0167  ####
+
+==============================================================================
+ARTIFACTS
+==============================================================================
+  models/finguard_best_model.joblib           5,550.8 KB
+  models/finguard_random_forest.joblib        5,550.8 KB
+  models/finguard_xgboost.joblib                265.1 KB
+  models/model_config.json                       13.1 KB
+  models/preprocessor.joblib                      6.9 KB
+  reports/confusion_matrices.png                 58.6 KB
+  reports/evaluation_report.txt                  12.1 KB
+  reports/explainability_report.txt               8.1 KB
+  reports/feature_importance.png                103.3 KB
+  reports/pr_roc_curves.png                      98.1 KB
+  reports/threshold_calibration.png             103.7 KB
+
+==============================================================================
+MODULE 3 USAGE
+==============================================================================
+  import joblib, pandas as pd
+  from train_model import engineer_features
+
+  pipe = joblib.load('models/finguard_best_model.joblib')
+  cfg  = json.load(open('models/model_config.json'))
+  prob = pipe.predict_proba(engineer_features(txn_df))[:, 1]
+  flag = prob >= cfg['optimal_threshold']

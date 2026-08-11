@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+ENV/
+pythonenv*
+.pytest_cache/
+.mypy_cache/
+.pyre/
+
+# Virtual environments
+.venv/
+venv/
+
+# Node / frontend
+node_modules/
+.npm/
+.pnpm-store/
+.next/
+out/
+dist/
+build/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Model artifacts
+models/*.joblib
+models/**/*.joblib
+*.joblib
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

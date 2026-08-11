@@ -1,0 +1,29 @@
+# FinGuard - UPI fraud detection and explainable AI
+#
+# IMPORTANT - the numpy/pandas bounds below are not cosmetic.
+# SHAP depends on numba, and numba (0.66, the current release) requires numpy<2.5.
+# pandas 3.x with numpy 2.4 segfaults on ordinary .loc indexing over its new `str`
+# dtype - a hard process crash, not an exception. pandas 2.3 with numpy 2.4 is a
+# coherent, tested combination. Do not relax these upper bounds without rerunning
+# all three modules end to end.
+
+numpy>=2.0,<2.5
+pandas>=2.2,<3
+
+# Module 1 - synthetic data generation
+Faker>=25.0
+
+# Module 2 - predictive ML engine
+scikit-learn>=1.4
+xgboost>=2.0
+joblib>=1.3
+matplotlib>=3.8
+seaborn>=0.13
+
+# Module 3 - explainable AI
+shap>=0.44
+
+# Module 4 - REST API
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
