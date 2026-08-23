@@ -27,3 +27,22 @@ shap>=0.44
 fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.7
+
+# Module 6 - chargeback evidence responder
+#
+# The only LLM dependency in the project, and every part of it is optional. The module
+# picks a provider from whichever API key is present - GEMINI_API_KEY or GOOGLE_API_KEY
+# for Gemini, ANTHROPIC_API_KEY for Claude - and with neither it drafts packets from
+# templates and flags them `degraded`. A dispute has a filing deadline, so an
+# unreachable API must never mean no document.
+#
+# Install whichever you have a key for; neither is required for the tests, which mock
+# the provider boundary rather than the SDKs.
+google-genai>=1.0 ; extra == "gemini"
+anthropic>=0.40   ; extra == "claude"
+
+# Module 5 - decision ledger
+# No dependency: sqlite3 ships with CPython. Noted here so the absence reads as a
+# choice rather than an omission.
+
+# Tests live in requirements-dev.txt.
