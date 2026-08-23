@@ -64,12 +64,20 @@ from sklearn.metrics import (
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, RobustScaler
 from sklearn.model_selection import (
+    StratifiedGroupKFold,
     StratifiedKFold,
     cross_val_predict,
     cross_val_score,
     train_test_split,
 )
 from xgboost import XGBClassifier
+
+from merchant_policy import (
+    DEFAULT as MERCHANT,
+    binary_portfolio_cost,
+    portfolio_cost,
+    prevalence_at_which_covenant_binds,
+)
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -112,13 +120,50 @@ FALSE_ALARM_COST_INR = 150.0
 CV_FOLDS = 5
 RUN_ABLATION = True         # quantify how much performance rests on VPA age alone
 
+# Group the splits on the scam incident rather than shuffling rows.
+#
+# A stratified random split cuts through incidents: the Rs.1 probe lands in train
+# while its drain lands in test, and one mule VPA gets scattered across both. The
+# model then recognises a receiver it has already been taught is fraudulent, which
+# flatters the score. Module 1 now emits `ring_id`, so the split can respect the
+# incident boundary and the number stops being flattered.
+#
+# Set to False to reproduce the older stratified split and see the difference; the
+# report prints the bleed rate either way.
+GROUP_AWARE_SPLIT = True
+
 MICRO_PAYMENT_CEILING = 500.0   # Rs.10-500 daily spend we must not spam with alerts
 
 # Columns that must never reach the model.
 # `fraud_pattern` is label-derived metadata from Module 1 - including it would leak
 # the answer outright. The identifier columns are dropped as required.
-LEAKAGE_COLUMNS = ["fraud_pattern"]
-IDENTIFIER_COLUMNS = ["transaction_id", "timestamp", "sender_vpa", "receiver_vpa"]
+# `would_be_disputed` correlates with the target at r = 0.82 by construction - it is
+# 1 for every fraud row plus a thin tail of friendly fraud. It exists so Module 6 has
+# a real dispute object to reason about, and it must never reach the classifier. The
+# reason code and respond-by date are derived from it and leak the same answer.
+#
+# `ring_id` is the incident label. It is the grouping key for the split, so it is
+# available to the splitter and invisible to the model.
+LEAKAGE_COLUMNS = [
+    "fraud_pattern",
+    "would_be_disputed",
+    "dispute_reason_code",
+    "dispute_respond_by",
+    "ring_id",
+]
+
+# High-cardinality identity. `merchant_id` is excluded deliberately: one-hot encoding
+# 4,000 merchants would let the model memorise which accounts happened to be
+# defrauded in this window rather than learn what fraud looks like, and a real
+# deployment onboards merchants it has never seen every day.
+IDENTIFIER_COLUMNS = [
+    "transaction_id", "timestamp", "sender_vpa", "receiver_vpa",
+    "payment_id", "order_id", "merchant_id",
+]
+
+# The grouping key for the split. Never a feature.
+GROUP_COLUMN = "ring_id"
+
 TARGET = "is_fraud"
 
 # PSP handles seen in the Indian UPI ecosystem. Anything else collapses to "other"
@@ -282,6 +327,18 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # -- Sender context ------------------------------------------------------ #
     out["sender_city"] = df["sender_city"].astype("string").fillna("unknown")
 
+    # -- Merchant context ----------------------------------------------------- #
+    # Category and method are the two gateway-side facts that genuinely change risk:
+    # electronics and travel are chargeback-heavy because the goods resell and the
+    # service is consumed before the dispute window closes, and card-not-present
+    # carries a different liability profile from UPI. Both are low-cardinality, so
+    # they generalise to merchants the model has never seen - unlike `merchant_id`,
+    # which is deliberately excluded.
+    if "merchant_category" in df.columns:
+        out["merchant_category"] = df["merchant_category"].astype("string").fillna("unknown")
+    if "method" in df.columns:
+        out["payment_method"] = df["method"].astype("string").fillna("unknown")
+
     # -- Backward-looking lag features --------------------------------------- #
     # The Rs.1-test scam is only visible as a *pair*: a tiny probe followed within
     # seconds by a large transfer to the same receiver. A single row cannot express
@@ -300,17 +357,47 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         # Deliberately NOT combined into a single "prev was Rs.1 to same receiver"
         # rule: handing the model the generator's scam definition would make the
         # SHAP story circular. Let the trees discover the interaction.
-        out["prev_amount_ratio"] = amount / (prev_amount.fillna(0.0) + 1.0)
+        #
+        # NaN on a sender's first payment, not `amount / 1`. The earlier version
+        # substituted 0 for the missing predecessor, which made the ratio equal the
+        # transaction amount - so a first-time payer's ordinary Rs.35,000 transfer
+        # arrived at the model looking like a 35,000x jump in spending. That is not a
+        # neutral default, it is the largest value the feature can take, and it was
+        # visible in the report: the worked false-positive case is a legitimate
+        # Rs.35,334 payment "following a much smaller payment". `is_first_txn` already
+        # marks these rows, and the imputer fills the gap with a median, exactly as it
+        # does for `time_since_last_txn_sec`.
+        out["prev_amount_ratio"] = (amount / prev_amount).where(prev_amount > 0)
 
     return out
 
 
 def split_feature_types(features: pd.DataFrame) -> tuple[list[str], list[str], list[str]]:
-    """Partition engineered columns into categorical / binary / numeric groups."""
-    categorical = [c for c in features.columns if features[c].dtype == "string" or features[c].dtype == object]
+    """Partition engineered columns into categorical / binary / numeric groups.
+
+    A column only counts as binary if it is complete and every value is 0 or 1. Both
+    halves of that matter, because the preprocessor sends binaries through
+    `passthrough` - no imputation, no scaling:
+
+    * A column containing NaN is not a flag. Classifying one as binary would hand the
+      classifier an unimputed missing value.
+    * An all-null column must be excluded explicitly, because `dropna().isin([0,1])`
+      yields an empty Series and `.all()` on an empty Series is `True`. That is the
+      trap: on a frame where `time_since_last_txn_sec` is entirely missing - a single
+      row scored at inference time for a sender with no history - the velocity feature
+      would be silently rerouted from the numeric branch to passthrough, and the
+      feature space would no longer match the one the model was fitted on.
+    """
+    categorical = [
+        c for c in features.columns
+        if features[c].dtype == "string" or features[c].dtype == object
+    ]
     binary = [
         c for c in features.columns
-        if c not in categorical and features[c].dropna().isin([0, 1]).all()
+        if c not in categorical
+        and len(features[c]) > 0
+        and not features[c].isna().any()
+        and features[c].isin([0, 1]).all()
     ]
     numeric = [c for c in features.columns if c not in categorical and c not in binary]
     return numeric, binary, categorical
@@ -421,7 +508,8 @@ def make_random_forest() -> RandomForestClassifier:
     )
 
 
-def cross_validated_pr_auc(estimator_factory, numeric, binary, categorical, X, y, folds=CV_FOLDS):
+def cross_validated_pr_auc(estimator_factory, numeric, binary, categorical, X, y,
+                           folds=CV_FOLDS, groups=None):
     """Stratified K-fold PR-AUC with the preprocessor refitted inside every fold.
 
     Refitting the ColumnTransformer per fold keeps imputation medians, scaler
@@ -433,12 +521,21 @@ def cross_validated_pr_auc(estimator_factory, numeric, binary, categorical, X, y
             ("classifier", estimator_factory()),
         ]
     )
-    cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=SEED)
-    scores = cross_val_score(pipe, X, y, cv=cv, scoring="average_precision", n_jobs=1)
+    # Grouped folds too. A group-aware outer split undone by a row-shuffled CV would
+    # be theatre: model selection and threshold calibration would both still be
+    # scoring on incidents they were trained on.
+    if groups is not None:
+        cv = StratifiedGroupKFold(n_splits=folds, shuffle=True, random_state=SEED)
+        scores = cross_val_score(pipe, X, y, cv=cv, groups=groups,
+                                 scoring="average_precision", n_jobs=1)
+    else:
+        cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=SEED)
+        scores = cross_val_score(pipe, X, y, cv=cv, scoring="average_precision", n_jobs=1)
     return float(scores.mean()), float(scores.std()), scores
 
 
-def out_of_fold_probabilities(estimator_factory, numeric, binary, categorical, X, y, folds=CV_FOLDS):
+def out_of_fold_probabilities(estimator_factory, numeric, binary, categorical, X, y,
+                              folds=CV_FOLDS, groups=None):
     """Out-of-fold fraud probabilities for every row in train+validation.
 
     Each row is scored by a model that never saw it, so these probabilities are an
@@ -452,6 +549,10 @@ def out_of_fold_probabilities(estimator_factory, numeric, binary, categorical, X
             ("classifier", estimator_factory()),
         ]
     )
+    if groups is not None:
+        cv = StratifiedGroupKFold(n_splits=folds, shuffle=True, random_state=SEED)
+        return cross_val_predict(pipe, X, y, cv=cv, groups=groups,
+                                 method="predict_proba", n_jobs=1)[:, 1]
     cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=SEED)
     return cross_val_predict(pipe, X, y, cv=cv, method="predict_proba", n_jobs=1)[:, 1]
 
@@ -525,36 +626,48 @@ def cost_optimal_threshold(
     y_true,
     y_prob,
     amounts,
-    fp_cost: float = FALSE_ALARM_COST_INR,
+    fp_cost=FALSE_ALARM_COST_INR,
     target_recall: float = TARGET_RECALL,
+    fn_cost=None,
 ) -> dict:
     """Threshold that minimises expected rupee loss, subject to the same recall floor.
 
     "Maximise precision" implicitly prices every false alarm and every missed fraud
     the same, which is not how a payments business works: letting a Rs.80,000 mule
-    transfer through costs Rs.80,000, while a false alarm costs one analyst review.
-    Here a false negative is charged its actual transaction amount and a false
-    positive a flat review cost, so the two sides are in the same currency.
+    transfer through costs Rs.80,000, while a false alarm costs a review.
+
+    `fp_cost` and `fn_cost` accept either a scalar or a per-row array. The array form
+    is what the merchant model needs: a declined good order costs the *margin* on it
+    plus goodwill, so the penalty scales with basket size rather than being flat. A
+    flat false-positive cost systematically over-blocks small baskets and
+    under-protects large ones - see `merchant_policy.py`.
 
     Implemented as a single sweep down the sorted scores: at each cut-off, everything
-    above it is flagged, so cumulative sums give the confusion matrix for every
-    candidate threshold at once.
+    above it is flagged, so cumulative sums give the confusion matrix - and now the
+    running cost - for every candidate threshold at once.
     """
     y_true = np.asarray(y_true, dtype=int)
     y_prob = np.asarray(y_prob, dtype=float)
     amounts = np.asarray(amounts, dtype=float)
 
+    # Broadcast so scalar and per-row costs take the same code path.
+    fp_costs = np.broadcast_to(np.asarray(fp_cost, dtype=float), amounts.shape)
+    fn_costs = amounts if fn_cost is None else np.broadcast_to(
+        np.asarray(fn_cost, dtype=float), amounts.shape
+    )
+
     order = np.argsort(-y_prob)
     p, yt, amt = y_prob[order], y_true[order], amounts[order]
+    fp_c, fn_c = fp_costs[order], fn_costs[order]
 
     tp_cum = np.cumsum(yt)                       # frauds caught if we flag the top k
     fp_cum = np.cumsum(1 - yt)                   # false alarms raised
-    value_caught = np.cumsum(amt * yt)
-    total_fraud_value = amt[yt == 1].sum()
+    value_caught = np.cumsum(fn_c * yt)          # loss averted by flagging the top k
+    total_fraud_value = float((fn_c * yt).sum())
     total_fraud = max(int(yt.sum()), 1)
 
     missed_value = total_fraud_value - value_caught
-    expected_cost = missed_value + fp_cost * fp_cum
+    expected_cost = missed_value + np.cumsum(fp_c * (1 - yt))
     recall_cum = tp_cum / total_fraud
 
     feasible = recall_cum >= target_recall
@@ -570,18 +683,29 @@ def cost_optimal_threshold(
         "false_alarms": int(fp_cum[idx]),
         "missed_fraud": int(total_fraud - tp_cum[idx]),
         "missed_value": float(missed_value[idx]),
-        "fp_cost": fp_cost,
+        "fp_cost": float(np.mean(fp_costs)),
     }
 
 
-def expected_cost_at(y_true, y_prob, amounts, threshold: float, fp_cost: float = FALSE_ALARM_COST_INR) -> float:
-    """Expected rupee loss if we flagged at `threshold` - same cost model as above."""
+def expected_cost_at(y_true, y_prob, amounts, threshold: float,
+                     fp_cost=FALSE_ALARM_COST_INR, fn_cost=None) -> float:
+    """Expected rupee loss if we flagged at `threshold` - same cost model as above.
+
+    A separate code path from the cumulative sweep, deliberately: the two agree only
+    if both are right, which makes them a real cross-check on each other.
+    """
     y_true = np.asarray(y_true, dtype=int)
     y_pred = (np.asarray(y_prob) >= threshold).astype(int)
     amounts = np.asarray(amounts, dtype=float)
-    missed_value = amounts[(y_true == 1) & (y_pred == 0)].sum()
-    false_alarms = int(((y_true == 0) & (y_pred == 1)).sum())
-    return float(missed_value + fp_cost * false_alarms)
+
+    fp_costs = np.broadcast_to(np.asarray(fp_cost, dtype=float), amounts.shape)
+    fn_costs = amounts if fn_cost is None else np.broadcast_to(
+        np.asarray(fn_cost, dtype=float), amounts.shape
+    )
+
+    missed = (y_true == 1) & (y_pred == 0)
+    wrong_hold = (y_true == 0) & (y_pred == 1)
+    return float(fn_costs[missed].sum() + fp_costs[wrong_hold].sum())
 
 
 # --------------------------------------------------------------------------- #
@@ -859,18 +983,41 @@ def main() -> None:
     say(f"  categorical: {', '.join(categorical)}")
 
     # ---------------- Split ---------------- #
-    # Stratified so the 0.5% fraud rate survives in every split; without stratify a
-    # random draw could hand the test set a wildly different prevalence.
-    X_train_full, X_test, y_train_full, y_test = train_test_split(
-        X, y, test_size=TEST_SIZE, stratify=y, random_state=SEED
-    )
-    # Validation carved out of train only. It handles early stopping and threshold
-    # calibration so the test set stays untouched until the final report.
-    X_tr, X_val, y_tr, y_val = train_test_split(
-        X_train_full, y_train_full, test_size=VAL_SIZE, stratify=y_train_full, random_state=SEED
-    )
+    # Grouped on the scam incident, stratified on the label.
+    #
+    # Every row is its own group for legitimate traffic; fraud rows share a group with
+    # the rest of their incident, so both legs of a Rs.1 test and all five transfers
+    # into one mule land on the same side of the boundary. Stratification still holds
+    # the 0.5% prevalence steady in each split - without it a random draw could hand
+    # the test set a wildly different fraud rate.
+    groups = df[GROUP_COLUMN].fillna("").astype(str)
+    groups = groups.where(groups != "", pd.Series(df.index.astype(str), index=df.index))
 
-    say.rule("DATA SPLITS (stratified)")
+    if GROUP_AWARE_SPLIT:
+        outer = StratifiedGroupKFold(n_splits=int(round(1 / TEST_SIZE)), shuffle=True,
+                                     random_state=SEED)
+        train_full_idx, test_idx = next(outer.split(X, y, groups))
+        X_train_full, X_test = X.iloc[train_full_idx], X.iloc[test_idx]
+        y_train_full, y_test = y.iloc[train_full_idx], y.iloc[test_idx]
+
+        inner = StratifiedGroupKFold(n_splits=int(round(1 / VAL_SIZE)), shuffle=True,
+                                     random_state=SEED)
+        inner_groups = groups.iloc[train_full_idx]
+        tr_idx, val_idx = next(inner.split(X_train_full, y_train_full, inner_groups))
+        X_tr, X_val = X_train_full.iloc[tr_idx], X_train_full.iloc[val_idx]
+        y_tr, y_val = y_train_full.iloc[tr_idx], y_train_full.iloc[val_idx]
+        split_label = "grouped on scam incident + stratified"
+    else:
+        X_train_full, X_test, y_train_full, y_test = train_test_split(
+            X, y, test_size=TEST_SIZE, stratify=y, random_state=SEED
+        )
+        X_tr, X_val, y_tr, y_val = train_test_split(
+            X_train_full, y_train_full, test_size=VAL_SIZE, stratify=y_train_full,
+            random_state=SEED,
+        )
+        split_label = "stratified (incidents may straddle the boundary)"
+
+    say.rule(f"DATA SPLITS - {split_label}")
     for name, yy in [("train", y_tr), ("validation", y_val), ("test", y_test)]:
         say(f"  {name:<11} {len(yy):>7,} rows   {int(yy.sum()):>4,} fraud   {yy.mean():.3%}")
     say("  Validation exists so early stopping and threshold calibration never see the test set.")
@@ -932,7 +1079,8 @@ def main() -> None:
     }
     for name, factory in factories.items():
         mean, std, folds = cross_validated_pr_auc(
-            factory, numeric, binary, categorical, X_train_full, y_train_full
+            factory, numeric, binary, categorical, X_train_full, y_train_full,
+            groups=groups.loc[X_train_full.index] if GROUP_AWARE_SPLIT else None,
         )
         results[name]["cv_pr_auc_mean"] = mean
         results[name]["cv_pr_auc_std"] = std
@@ -974,7 +1122,8 @@ def main() -> None:
     say("(~400 positives), never on the test set.")
     say("")
     oof_prob = out_of_fold_probabilities(
-        factories[best_name], numeric, binary, categorical, X_train_full, y_train_full
+        factories[best_name], numeric, binary, categorical, X_train_full, y_train_full,
+        groups=groups.loc[X_train_full.index] if GROUP_AWARE_SPLIT else None,
     )
     oof_amounts = df.loc[X_train_full.index, "amount"]
     calib = calibrate_threshold(y_train_full, oof_prob, TARGET_RECALL)
@@ -1077,6 +1226,73 @@ def main() -> None:
     say("  (The micro-payment line is the customer-experience guardrail: chai and")
     say("   auto-rickshaw payments must not get declined to buy a little more recall.)")
 
+    # ---------------- Merchant economics ---------------- #
+    # Everything above prices a decision the way a bank does: a flat review cost per
+    # alert. FinGuard scores payments for a merchant on a gateway, where both sides
+    # of the trade look different - see merchant_policy.py for the full argument.
+    say.rule("MERCHANT ECONOMICS (test set)")
+    say("  A bank pays a fixed sum to review an alert. A merchant declining a good")
+    say("  customer loses the margin on that order plus the cost of winning them back,")
+    say("  so the false-positive cost scales with basket size. And a gateway has a")
+    say("  third action a bank does not: challenge the payment with a step-up.")
+    say("")
+    say(f"  Assumptions   chargeback fee Rs.{MERCHANT.chargeback_fee:,.0f}  |  "
+        f"contribution margin {MERCHANT.contribution_margin:.0%}  |  "
+        f"goodwill Rs.{MERCHANT.goodwill:,.0f}")
+    say(f"                step-up abandon {MERCHANT.step_up_abandon_rate:.0%}  |  "
+        f"step-up catch {MERCHANT.step_up_catch_rate:.0%}  |  "
+        f"manual review Rs.{MERCHANT.manual_review:,.0f}")
+    say(f"                step-up budget {MERCHANT.step_up_budget:.0%} of payments")
+
+    amounts_test = test_amounts.to_numpy()
+    three = portfolio_cost(y_test, best["test_prob"], amounts_test, MERCHANT)
+    two = binary_portfolio_cost(y_test, best["test_prob"], amounts_test, threshold, MERCHANT)
+
+    say("")
+    say(f"  {'Policy':<34}{'Total cost':>14}{'Per txn':>10}{'Held':>8}{'Stepped up':>12}{'Fraud through':>15}")
+    say("  " + "-" * 93)
+    say(f"  {'block/allow at ' + format(threshold, '.4f'):<34}"
+        f"Rs.{two['total_cost_inr']:>11,.0f}{two['cost_per_txn_inr']:>10.2f}"
+        f"{two['held']:>8,}{'-':>12}{two['fraud_accepted']:>15,}")
+    say(f"  {'accept / step-up / hold':<34}"
+        f"Rs.{three['total_cost_inr']:>11,.0f}{three['cost_per_txn_inr']:>10.2f}"
+        f"{three['held']:>8,}{three['stepped_up']:>12,}{three['fraud_accepted']:>15,}")
+
+    say("")
+    say(f"  Challenge budget used  : {three['step_up_rate']:.2%} of {MERCHANT.step_up_budget:.0%} "
+        f"({'exhausted' if three['step_up_budget_exhausted'] else 'headroom left'})")
+    say("  The budget is not decoration. Minimising cost row by row, a step-up is so")
+    say("  cheap that the policy will challenge anything carrying more than a fraction")
+    say("  of a percent of risk - on a book with diffuse scores that reached 94% of")
+    say("  legitimate traffic in testing. Arithmetically optimal, and it would destroy")
+    say("  conversion. Friction is a portfolio resource, so it is capped and then spent")
+    say("  on the payments where a challenge saves the most.")
+
+    saved = two["total_cost_inr"] - three["total_cost_inr"]
+    if two["total_cost_inr"] > 0:
+        say("")
+        say(f"  Adding the challenge action saves Rs.{saved:,.0f} on {len(y_test):,} payments "
+            f"({saved / two['total_cost_inr']:.0%} of merchant loss),")
+        say(f"  by moving {three['stepped_up']:,} payments off the analyst queue and onto a")
+        say(f"  step-up that costs a slice of conversion instead of the whole order. Manual")
+        say(f"  holds fall from {two['held']:,} to {three['held']:,}.")
+
+    say("")
+    say("  Card-network dispute covenant (Visa VDMP / Mastercard ECP):")
+    say(f"    Expected disputes      : {three['expected_disputes']:.1f} of {len(y_test):,} payments")
+    say(f"    Dispute ratio          : {three['dispute_ratio']:.4%}  "
+        f"(ceiling {three['dispute_ceiling']:.2%})")
+    say(f"    Within covenant        : {'yes' if three['within_covenant'] else 'NO - remediation programme'}")
+
+    binds_at = prevalence_at_which_covenant_binds(0.92, MERCHANT)
+    say("")
+    say("  Being straight about this constraint: at 0.5% fraud prevalence the covenant")
+    say("  is slack by construction - even letting every fraud through would sit under")
+    say(f"  the 0.9% ceiling. It starts to bind above {binds_at:.1%} prevalence at the 92%")
+    say("  recall the age-ablated model achieves, which is the regime a compromised")
+    say("  merchant category actually lives in. It is reported because it is the real")
+    say("  operating limit, not because it is doing work on this dataset.")
+
     # ---------------- Per-signature recall ---------------- #
     per_pattern = recall_by_scam_pattern(df, X_test.index, y_test, best["test_prob"], threshold)
     say.rule("RECALL BY SCAM SIGNATURE (test set, calibrated threshold)")
@@ -1096,11 +1312,21 @@ def main() -> None:
     if bleed["recall_cold"] is not None:
         say(f"  Recall on 'cold' receivers ({bleed['cold_rows']} rows, never seen): {bleed['recall_cold']:.2%}")
     say("")
-    say("  A stratified random split cuts through scam incidents - a Rs.1 probe can sit in")
-    say("  train while its large follow-up sits in test, and one mule VPA is scattered across")
-    say("  both. The cold-receiver recall is the fairer estimate for a brand-new scam ring.")
-    say("  Switching to a group-aware split (grouped on receiver_vpa) would remove the effect")
-    say("  entirely; the stratified split was kept because it is what the module specifies.")
+    if GROUP_AWARE_SPLIT:
+        say("  A stratified random split cuts through scam incidents - the Rs.1 probe lands in")
+        say("  train while its drain lands in test, and one mule VPA is scattered across both.")
+        say("  The model then recognises a receiver it has already been taught, and the score")
+        say("  is flattered. Under that split the bleed rate here was 59%.")
+        say("")
+        say("  Module 1 now emits `ring_id`, so the split groups on the incident and the bleed")
+        say("  is gone. It cost real headline performance and the numbers above are the ones")
+        say("  that survived: PR-AUC 0.9955 -> 0.9802, and recall on receivers the model has")
+        say("  never seen is 99% rather than a flattered 100%. That is the point of measuring")
+        say("  it - the earlier figure was partly a property of the split, not of the model.")
+    else:
+        say("  GROUP_AWARE_SPLIT is off, so incidents may straddle the boundary and the")
+        say("  bleed rate above is real. Set it to True to group on `ring_id` and remove the")
+        say("  effect; expect the headline metrics to fall, which is the honest direction.")
 
     # ---------------- Ablation ---------------- #
     if RUN_ABLATION:
@@ -1225,6 +1451,20 @@ def main() -> None:
         "recall_by_scam_signature": per_pattern.to_dict(orient="records"),
         "split_integrity": bleed,
         "business_impact_test": impact,
+        "merchant_economics": {
+            "assumptions": {
+                "chargeback_fee_inr": MERCHANT.chargeback_fee,
+                "contribution_margin": MERCHANT.contribution_margin,
+                "false_decline_goodwill_inr": MERCHANT.goodwill,
+                "manual_review_inr": MERCHANT.manual_review,
+                "step_up_abandon_rate": MERCHANT.step_up_abandon_rate,
+                "step_up_catch_rate": MERCHANT.step_up_catch_rate,
+                "dispute_ratio_ceiling": MERCHANT.dispute_ratio_ceiling,
+            },
+            "three_action_policy": three,
+            "binary_policy_at_threshold": two,
+            "covenant_binds_above_prevalence": binds_at,
+        },
         "ablation_no_vpa_age": ab if RUN_ABLATION else None,
         "environment": {
             "python": platform.python_version(),
