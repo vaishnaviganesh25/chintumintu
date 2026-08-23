@@ -31,6 +31,15 @@ build/
 .env.*
 !.env.example
 
+# Decision ledger - runtime state, regenerated on first request
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Test caches
+.hypothesis/
+
 # Model artifacts
 models/*.joblib
 models/**/*.joblib

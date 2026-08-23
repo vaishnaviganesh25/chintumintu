@@ -1,4 +1,21 @@
-# FinGuard — Real-Time UPI Fraud Detection and Explainable AI
+# FinGuard — Merchant-Side Payment Risk, End to End
+
+Stops a merchant losing money to payment fraud, and defends the disputes that get
+through anyway. Every decision is priced in rupees, explained, recorded, and
+answerable months later — and the engine keeps scoring when its own model is gone.
+
+| | |
+| --- | --- |
+| **Detection** | PR-AUC 0.9802, recall 0.99 on a test split grouped so no scam incident straddles the boundary |
+| **What it saves** | ₹180,472 of merchant loss per 20,000 payments, against ₹244,672 for a single block/allow threshold |
+| **Honesty** | Grouping the split cost real performance — 0.9955 → 0.9802 — because the earlier figure was partly a property of the split. Without account age it falls again to 0.8788, and that is the number to plan against |
+| **Resilience** | Four-rung degradation ladder; kill the model and it still scores, in 3 ms instead of 91 |
+| **Tests** | 180 Python + 43 TypeScript, including property-based |
+
+```bash
+docker compose up --build     # dashboard :5173, API docs :8080/docs
+```
+
 
 | Module | Script | Output |
 | --- | --- | --- |
@@ -6,8 +23,13 @@
 | 2. ML engine | `train_model.py` | `models/`, `reports/` |
 | 3. Explainable AI | `explain_model.py` | `reports/explanations/` |
 | 4. REST API | `main.py` | FastAPI service on port 8080 |
-| 5. Dashboard | `finguard-dashboard/` | React + Vite UI on port 5173 |
+| 5. Decision ledger | `audit_store.py` | `data/finguard_audit.db` |
+| 6. Chargeback responder | `chargeback_agent.py` | representment packets, LLM-drafted |
+| 7. Degradation ladder | `degradation.py` | keeps scoring when the model cannot |
+| — merchant economics | `merchant_policy.py` | the cost model every decision is priced in |
+| — dashboard | `finguard-dashboard/` | React + Vite UI on port 5173 |
 | — serving check | `predict_example.py` | console demo of the scoring path |
+| — test suite | `tests/` | 180 tests, `pytest` |
 
 ```bash
 pip install -r requirements.txt
@@ -16,6 +38,12 @@ python train_model.py             # ~110 s
 python explain_model.py           # ~100 s
 python predict_example.py         # verifies the saved artifacts round-trip
 python main.py                    # serves the API on http://localhost:8080
+```
+
+```bash
+pip install -r requirements-dev.txt
+pytest                            # 180 tests
+pytest -m "not slow"              # 144 of them, no model artifacts needed
 ```
 
 > **Environment warning.** The numpy and pandas bounds in `requirements.txt` are
@@ -32,7 +60,7 @@ A seeded generator that produces 100,000 realistic Indian UPI transactions with 
 fraud, injected as three scam patterns actually seen in the Indian payments ecosystem.
 
 Real UPI data is confidential, so this stands in as a faithful substitute for
-model development, threshold tuning, and SHAP/LIME explainability work.
+model development, threshold tuning, and SHAP explainability work.
 
 ## Setup
 
@@ -438,7 +466,14 @@ joblib's per-call thread pool costs more than the traversal. Measured on this mo
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/v1/health` | Model name, threshold, training timestamp, senders tracked |
+| `GET` | `/api/v1/health` | Model name, threshold, training timestamp, senders tracked, ledger state |
+| `GET` | `/api/v1/decisions` | The alert queue — recent decisions, newest first, `?only_blocked=true` |
+| `GET` | `/api/v1/decisions/{id}` | Replay one decision in full, months later |
+| `POST` | `/api/v1/decisions/{id}/disposition` | Record a reviewer's conclusion |
+| `GET` | `/api/v1/stats` | Volume, block rate, rupees held, precision over reviewed alerts |
+| `POST` | `/api/v1/disputes` | Draft a representment packet for a disputed payment |
+| `GET` | `/api/v1/disputes/{id}` | Retrieve a drafted packet |
+| `GET` | `/api/v1/health/deep` | Per-dependency status and the active degradation rung |
 | `GET` | `/docs` | Swagger UI |
 
 If the `models/` artifacts are missing the service still starts, but `/health` reports
@@ -448,6 +483,290 @@ with a stack trace the frontend developer has to go find in a terminal.
 CORS allows `localhost` and `127.0.0.1` on ports 5173–5175. The extra ports are not
 padding: when 5173 is occupied Vite silently moves to 5174, and without them listed
 that fallback presents as a CORS failure that looks like a broken backend.
+
+---
+
+# Module 5 — Decision ledger
+
+`audit_store.py` writes every score to an append-only SQLite ledger before the
+response leaves the process, together with the model version that produced it and
+the full SHAP vector behind it. Without this the explainability work is a rendering
+concern; with it, a decision is answerable months later.
+
+```bash
+curl -s localhost:8080/api/v1/decisions/dec-8139f9c6017841a1 | jq
+```
+
+```json
+{
+  "decision_id": "dec-8139f9c6017841a1",
+  "scored_at": "2026-08-23T01:54:20.318Z",
+  "fraud_probability": 0.8217,
+  "threshold": 0.1230,
+  "threshold_policy": "cost",
+  "decision": "BLOCKED",
+  "model_name": "RandomForest",
+  "model_trained_at": "2026-08-11T12:23:10+00:00",
+  "shap_concepts": { "transaction amount": 0.1462, "time of day": 0.0655, "...": "22 concepts" },
+  "dispositions": [{ "outcome": "confirmed_fraud", "reviewer": "analyst-1" }]
+}
+```
+
+## Three properties this file exists to guarantee
+
+**The decision record is immutable.** `decisions` is written once and never updated.
+Analyst outcomes land in a separate `dispositions` table with their own rows and
+timestamps, so "what the model decided" and "what a human later concluded" stay
+distinguishable — and a reviewer who changes their mind appends rather than erases.
+An audit trail you can edit is not an audit trail.
+
+**The explanation is stored whole.** The API response carries the concepts that
+mattered; the ledger carries all 22 with signed values. A stored top-3 would be a
+*rendering* of the explanation rather than the explanation, and could never be
+re-derived into a different view.
+
+**A ledger failure never becomes a scoring failure.** Blocking a payment is the
+product; recording it is bookkeeping. If the disk is full or the file is locked, the
+write is logged and dropped, `decision_id` comes back `null`, and the caller still
+gets a verdict — the alternative is a fraud engine that stops detecting fraud because
+a log file broke. `/api/v1/health` reports `audit_ledger: degraded` so the failure is
+visible rather than silent.
+
+## Precision after deployment
+
+`GET /api/v1/stats` reports precision over **analyst dispositions only**. In
+production there are no labels, only outcomes someone eventually confirms, so alerts
+nobody has reviewed are excluded rather than assumed correct — and `unclear` is
+excluded from both sides. That number will differ from the one in
+`reports/evaluation_report.txt`, and it is the one that would matter in operation.
+
+Storage is SQLite in WAL mode: one file, no daemon, concurrent readers alongside a
+writer, and `sqlite3` is in the standard library. At real volume this is the piece
+you would swap for Postgres plus an object store for the SHAP blobs; the interface is
+five methods wide to keep that swap cheap.
+
+---
+
+# What the group-aware split cost
+
+Module 1 emits a `ring_id` on every fraud row: both legs of a ₹1 test, all five
+transfers into one mule. The split groups on it, so no scam incident straddles the
+train/test boundary.
+
+| | Stratified split | Grouped on incident |
+| --- | --- | --- |
+| Test fraud sharing a receiver with train fraud | 59 / 100 | **0 / 100** |
+| PR-AUC (test) | 0.9955 | **0.9802** |
+| Recall on receivers never seen in training | 100% | **99%** |
+| Cross-validated PR-AUC | 0.9873 | **0.9844** |
+
+Every number got worse, and that is the point. Under a stratified split the ₹1 probe
+lands in train while its drain lands in test, and one mule VPA is scattered across
+both — so the model recognises a receiver it has already been taught is fraudulent.
+The earlier figures were partly a property of the split rather than of the model.
+
+`GROUP_AWARE_SPLIT = False` reproduces the old behaviour if you want to see the gap
+yourself. The cross-validation inside model selection and threshold calibration is
+grouped too; a group-aware outer split undone by a row-shuffled CV would be theatre.
+
+---
+
+# Merchant economics — what a decision actually costs
+
+`merchant_policy.py` is where the bank-side framing this project started from gets
+corrected. FinGuard scores payments for a **merchant on a gateway**, and that changes
+the arithmetic three ways.
+
+**A false negative is not just the transaction amount.** Fraud that clears is clawed
+back *and* costs a dispute fee — ₹1,250 on the assumptions here. On a ₹200 order that
+is more than seven times the basket, which is why small-ticket fraud is
+disproportionately expensive and why a policy tuned on rupee value alone under-protects
+it.
+
+**A false positive is not a flat review cost.** A bank pays an analyst a fixed sum per
+alert. A merchant declining a good customer loses the contribution margin on the order
+plus the cost of winning them back. A flat cost is the *wrong shape*: it spends the
+same ₹150 defending a ₹40 payment and a ₹90,000 one.
+
+**There is a third action.** A gateway can *challenge* a payment — 3-D Secure, an OTP
+step-up — costing a slice of conversion instead of the whole order. A bank blocks or
+allows; a two-outcome policy leaves that option on the table.
+
+| Policy | Total cost | Per txn | Held | Challenged | Fraud through |
+| --- | --- | --- | --- | --- | --- |
+| block / allow at 0.1541 | ₹244,672 | ₹12.23 | 130 | — | 1 |
+| **accept / step-up / hold** | **₹180,472** | **₹9.02** | 75 | 1,231 | 0 |
+
+Adding the challenge action saves **₹64,200 per 20,000 payments — 26% of merchant
+loss** — while cutting manual holds from 130 to 75 *and* catching the one fraud the
+single threshold let through. The saving was 67% before the split was grouped; most of
+that gap was the leak, not the policy.
+
+## The step-up budget, and why it exists
+
+Minimising cost row by row, a challenge is so cheap that the policy will challenge
+anything carrying more than a fraction of a percent of risk. On a book with diffuse
+scores that reached **94% of legitimate traffic** — arithmetically optimal, and it
+would destroy conversion. Friction is a portfolio resource, not a per-row one, so it
+is capped at 10% of payments and spent on the rows where a challenge saves the most.
+The shipped policy uses 6.2% of that budget.
+
+That failure was found by a test, not by inspection. `test_the_step_up_budget_is_never_exceeded`
+exists because of it.
+
+## The dispute covenant, and why it does nothing here
+
+Card networks put merchants into a remediation programme above roughly **0.9% disputes
+by count** (Visa VDMP, Mastercard ECP). That is a hard operating limit, so it is
+reported — at 0.0158% the shipped policy sits far inside it.
+
+Being straight about it: at 0.5% fraud prevalence the covenant is **slack by
+construction**. Even letting every fraud through would stay under the ceiling. It
+begins to bind above **11.3% prevalence** at the 92% recall the age-ablated model
+achieves. It is in the report because it is the real constraint in production, not
+because it is doing work on this dataset.
+
+## Same model, different merchant
+
+No threshold constant appears in the decision. The action boundaries fall out of the
+cost curves, so the same model yields a different policy per merchant:
+
+| Order value | 4% margin | 18% margin | 60% margin |
+| --- | --- | --- | --- |
+| ₹200 | 0.0010 | 0.0025 | 0.0080 |
+| ₹15,000 | 0.0035 | 0.0155 | 0.0500 |
+| ₹90,000 | 0.0040 | 0.0165 | 0.0530 |
+
+*Lowest fraud probability at which accepting stops being the cheapest action.* A
+4%-margin reseller should challenge a ₹50,000 order at a far lower probability than a
+60%-margin software seller, because a cleared fraud costs both the same while a
+declined order costs the reseller much less. `python merchant_policy.py` prints it.
+
+---
+
+# Module 6 — Chargeback evidence responder
+
+Detection stops a loss before it happens. `chargeback_agent.py` handles the ones that
+got through: it reconstructs the case from the decision ledger and drafts the
+representment packet an acquirer submits back to the network.
+
+```bash
+curl -X POST localhost:8080/api/v1/disputes -H "Content-Type: application/json" \
+  -d '{"decision_id":"dec-8139f9c6017841a1","dispute_reason":"Cardholder reports an unauthorised transaction"}'
+```
+
+This is the only place in FinGuard where a language model runs, and the boundaries
+around it are the interesting part.
+
+**The model never touches the score.** A held payment has to be reproducible and
+explainable months later; a non-deterministic component in the decision path would
+destroy both. The Random Forest decides, the model writes.
+
+**The evidence is retrieved by code, not by the model.** Handing it ledger tools and
+letting it decide what to look up would have been easy — and would have made the
+evidence behind a submitted document non-reproducible. `build_case_file` is
+deterministic; the model's job is synthesis under a schema, not discovery.
+
+**Reason codes come from an enumerated list.** Asking a model to recall a network
+reason code from memory is asking for a plausible wrong one on a document bound for an
+acquirer. The JSON Schema permits seven codes and nothing else.
+
+**It is allowed to recommend giving up.** Representing a dispute you will lose costs
+the filing fee again and worsens the merchant's win rate. `accept_liability` is a
+first-class outcome, and the deterministic path reaches it whenever an analyst has
+already confirmed fraud.
+
+**It degrades to a template draft.** No key, a timeout, a refusal, a response that will
+not validate — each falls back to a packet built from the same evidence, flagged
+`degraded: true`, with `generated_by` naming the reason. A dispute has a filing
+deadline; an ops team that gets nothing because a third-party API was down has been
+failed by its tooling.
+
+## Providers
+
+Pluggable, chosen by whichever key is present — there is no provider setting to fall
+out of step with the environment:
+
+```bash
+export GEMINI_API_KEY=...        # or GOOGLE_API_KEY  -> Gemini
+export ANTHROPIC_API_KEY=...     #                    -> Claude
+```
+
+With neither, everything still works and every packet comes back `degraded: true`.
+The schema crosses the wire as plain JSON Schema rather than an SDK-specific object,
+and the response is validated against the Pydantic model **on our side** — so a
+provider whose structured-output mode is loose still cannot put a malformed packet in
+front of an acquirer. The tests mock the provider boundary, so neither SDK is needed
+to run them.
+
+---
+
+# Module 7 — The degradation ladder
+
+A fraud engine that stops scoring is worse than one that scores badly. If the model
+will not load, or SHAP throws, or the process starts before its artifacts do, the
+payments keep arriving. `degradation.py` gives the engine four rungs and it is always
+on exactly one:
+
+| Rung | When | What it does |
+| --- | --- | --- |
+| `FULL` | normal | Random Forest + SHAP, calibrated probabilities, full explanations |
+| `RULES` | model unavailable | receiver ≤ 20 days old **and** ≥ ₹15,000 → hold; no SHAP |
+| `VALUE_FLOOR` | rules unavailable | hold anything above ₹25,000 |
+| `FAIL_SAFE` | nothing available | hold above ₹500, accept micro-payments |
+
+Two things make this more than a `try/except`.
+
+**Each rung is honest about what it is.** A fallback verdict carries `degraded: true`,
+names its rung, and says the model was unavailable. It never invents a probability —
+a made-up score would flow into the cost model and the ledger and be read months later
+as though the model had produced it, so the ledger records `-1.0` and a model name of
+`fallback:RULES`. A silent fallback is worse than a loud failure: the alert rate moves
+and everyone assumes the world changed.
+
+**The last rung is not "accept everything".** Failing open on a ₹90,000 payment to a
+fresh account because a joblib file is missing is a real loss. Failing *closed* on
+micro-payments is also wrong — it declines someone's morning chai to protect against a
+risk that is not there. So the bottom rung splits on value, the one signal available
+with no model, no rules and no history.
+
+The rule on the `RULES` rung is not invented for the occasion. It is the one Module 1
+measures: **62.4% precision**, against 7.1% for account age alone. A poor detector and
+a good fallback, and the report states both numbers.
+
+## Watching it happen
+
+```bash
+FINGUARD_ENABLE_CHAOS=1 python main.py
+
+curl -X POST "localhost:8080/api/v1/admin/chaos/model?disable=true"
+# score a payment -> HOLD, rung "rule engine (model unavailable)", 3 ms, no SHAP
+curl -X POST "localhost:8080/api/v1/admin/chaos/model?disable=false"
+```
+
+Disabled unless `FINGUARD_ENABLE_CHAOS` is set: an unauthenticated endpoint that
+switches off fraud detection should be something you opt into. `GET
+/api/v1/health/deep` reports every dependency and the rung the engine would answer on
+right now — the shallow probe answers *is it up*, this one answers *what can it
+currently do*.
+
+---
+
+# Running it
+
+```bash
+docker compose up --build
+```
+
+The API image trains the model at **build** time, not first-request time — a container
+whose first call takes two minutes fails its own health check and gets restarted
+mid-training, forever. First build is ~4 minutes; after that the layer is cached. The
+ledger lives on a named volume, because a decision record that vanishes with the
+container is not an audit trail. The health check uses the deep probe, so a container
+serving on the fallback rung reports unhealthy rather than merely up.
+
+CI runs the fast suite on every push, and the full end-to-end — generate, train,
+explain, `predict_example.py`, both Docker builds — on `main`.
 
 ---
 
@@ -481,9 +800,76 @@ Similarly, the risk gauge takes its colour from the decision, not from a fixed
 percentage band. The shipped threshold is 0.1230, so a payment can be blocked at 20%
 risk — a gauge that turned green below 40% would contradict the BLOCKED badge above it.
 
-## Receiver VPA age
+## Replaying a signature
 
-The form carries an optional **Receiver VPA Age (days)** field alongside the three core
-inputs. It is worth filling in: account age is the model's strongest single feature,
-and when it is absent the backend assumes an established account, so almost everything
-comes back APPROVED. Set it to `0` to demo a mule account.
+The form posts every field the API accepts — sender, receiver, amount, receiver VPA
+age, transaction time, sender city, and the gap since the sender's last payment. Two
+of those are not optional in practice:
+
+- **Receiver VPA age** is the model's strongest single feature. Left blank, the
+  backend assumes an established account and almost everything comes back APPROVED.
+  Set it to `0` to demo a mule.
+- **Transaction time** is what makes the odd-hour signature reachable. The model reads
+  hour-of-day straight off the timestamp, so without it every payment is scored at the
+  server's clock and a daytime demo can never produce a 3 AM phishing case.
+
+The preset row above the form fires the three scam signatures directly. `Rs.1 test`
+runs both legs in order — the probe, then the drain 43 seconds later to the same
+receiver — because the scam is a *pair* and no single submission can express it. Watch
+leg 1 clear and leg 2 get held citing *gap since the sender's previous payment* and
+*repeat payment to the same receiver*: the sequence, not the size.
+
+---
+
+# Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest                     # 180 tests
+pytest -m "not slow"       # 144 of them; the rest need models/ on disk
+cd finguard-dashboard && npm run test:run    # 43 tests
+```
+
+| File | Covers |
+| --- | --- |
+| `tests/test_features.py` | Feature engineering — the train/serve skew surface |
+| `tests/test_thresholds.py` | Both threshold policies, checked against hand-built score distributions |
+| `tests/test_api.py` | Endpoint contracts, sequence behaviour, ledger integration |
+| `tests/test_audit_store.py` | Ledger immutability, failure containment, reviewed precision |
+| `tests/test_merchant_policy.py` | Cost model, the step-up budget, the dispute covenant |
+| `tests/test_chargeback_agent.py` | Every way a provider can fail, and the boundaries around it |
+| `tests/test_degradation.py` | All four rungs, driven directly — including the two a healthy system never reaches |
+| `src/utils/scenarios.test.ts` | Every demo preset still produces the signature it claims |
+| `src/utils/validation.test.ts` | Client-side rules, kept in step with the API's validators |
+
+The suite is deliberately weighted towards properties rather than examples, because
+the failures that matter here are silent. `engineer_features` is called from three
+places — the training run, the explainer, and the API scoring one live row — and if
+those ever disagree about what a column means, nothing raises. The model simply
+starts scoring production traffic against a slightly different feature space than it
+was fitted on, and the only symptom is an alert-rate drift that looks like the world
+changing rather than a bug.
+
+Six real defects were found by writing these, all now fixed:
+
+- **`split_feature_types` misclassified an all-null column as binary.**
+  `dropna().isin([0,1]).all()` returns `True` on an empty Series, so a single row
+  scored for a sender with no history would route `time_since_last_txn_sec` from the
+  numeric branch to `passthrough` — skipping imputation and scaling, and reaching the
+  classifier as a raw `NaN`. Found by a Hypothesis case with `gap = -1`.
+- **Two dispositions inside the same second ordered arbitrarily.** ISO timestamps at
+  second resolution tie, so "the reviewer's latest conclusion" was whichever row the
+  planner happened to return, and the stats join counted one decision twice. Ordering
+  now breaks the tie on `rowid`.
+- **`validateTimestamp` accepted truncated dates.** `new Date("2026-08-")` does not
+  fail — it returns 1 August 2026. The validator now checks the shape before parsing
+  and rejects values that roll over, such as `2026-02-31`.
+- **The three-action policy challenged 94% of legitimate traffic.** Row-by-row cost
+  minimisation is so cheap per challenge that it will step up almost anything carrying
+  risk. Arithmetically optimal, operationally absurd. Friction is now a capped
+  portfolio resource, allocated by benefit.
+- **The alert queue silently emptied.** `recent_decisions` filtered on
+  `decision = 'BLOCKED'`, which matched nothing the moment the API began emitting
+  three actions. An empty queue reads as a quiet day, not a broken filter.
+- **Two analyst dispositions in the same second ordered arbitrarily** — and the stats
+  join counted one decision twice. Ordering now breaks the tie on `rowid`.
