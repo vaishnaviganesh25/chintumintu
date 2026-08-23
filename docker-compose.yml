@@ -1,0 +1,44 @@
+# Brings up the whole system: API, dashboard, and a persistent ledger volume.
+#
+#     docker compose up --build
+#     dashboard  http://localhost:5173
+#     API docs   http://localhost:8080/docs
+#
+# The first build trains the model (~4 minutes). Subsequent builds reuse the layer.
+
+services:
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      # Uncomment whichever provider you have a key for. Without one, dispute packets
+      # are drafted from templates and flagged `degraded` - nothing else changes.
+      # GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      #
+      # Lets an operator disable the model to demonstrate the degradation ladder.
+      # Off by default: an unauthenticated endpoint that switches off fraud detection
+      # should be something you opt into.
+      FINGUARD_ENABLE_CHAOS: ${FINGUARD_ENABLE_CHAOS:-0}
+    volumes:
+      # Named volume, not a bind mount: the ledger must outlive the container.
+      - finguard-ledger:/app/data
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./finguard-dashboard
+      args:
+        # The browser resolves this, so it is the host's address rather than the
+        # compose service name - `http://api:8080` would only work inside the network.
+        VITE_API_BASE_URL: http://localhost:8080
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  finguard-ledger:

@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push makes an in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install
+        run: pip install -r requirements-dev.txt
+
+      # The model artifacts are gitignored, so the tests that need them are marked
+      # `slow` and skipped here. Everything about feature engineering, the threshold
+      # maths, merchant economics, the ledger, the responder and the degradation
+      # ladder runs without them - which is most of the suite and all of the fast part.
+      - name: Test
+        run: pytest -m "not slow" -q
+
+      - name: Import check
+        # Catches a broken import in the API module without paying for a full train.
+        run: python -c "import main, audit_store, chargeback_agent, degradation, merchant_policy"
+
+  end-to-end:
+    name: End to end (trains the model)
+    runs-on: ubuntu-latest
+    # Only on main: this trains from scratch and takes a few minutes, which is too
+    # slow to sit in front of every pull request.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install
+        run: pip install -r requirements-dev.txt
+
+      - name: Generate, train, explain
+        run: |
+          python generate_upi_dataset.py
+          python train_model.py
+          python explain_model.py
+
+      - name: Verify the saved artifacts round-trip
+        run: python predict_example.py
+
+      - name: Full suite, including the tests that need the model
+        run: pytest -q
+
+      - name: Keep the evaluation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-report
+          path: |
+            reports/evaluation_report.txt
+            reports/explainability_report.txt
+            models/model_config.json
+
+  frontend:
+    name: Dashboard
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: finguard-dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: finguard-dashboard/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test:run
+
+      # `npm run build` is `tsc -b && vite build`, so this is the type check too.
+      - name: Build
+        run: npm run build
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the API image
+        # Proves the image builds and trains end to end inside it. Not pushed - this
+        # is a check, not a release.
+        run: docker build -t finguard-api:ci .
+
+      - name: Build the dashboard image
+        run: docker build -t finguard-dashboard:ci ./finguard-dashboard

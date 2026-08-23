@@ -1,0 +1,16 @@
+.git
+.github
+__pycache__
+*.pyc
+.pytest_cache
+.hypothesis
+tests
+data
+*.db
+*.db-wal
+*.db-shm
+finguard-dashboard/node_modules
+finguard-dashboard/dist
+# Regenerated inside the build from a seeded script, so shipping 13 MB into the
+# context would only slow the build down.
+upi_synthetic_data.csv
