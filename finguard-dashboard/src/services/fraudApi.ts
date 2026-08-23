@@ -1,6 +1,7 @@
 import type {
   ApiHealth,
   FraudDetectionResponse,
+  MerchantAction,
   SHAPFeature,
   TransactionInput,
 } from '../types';
@@ -104,8 +105,20 @@ function parseAnalysis(payload: unknown): FraudDetectionResponse {
     );
   }
 
+  // An older backend has no `action`; derive one from `status` rather than rendering
+  // an empty badge. A dashboard pointed at a stale API should degrade, not break.
+  const action: MerchantAction =
+    data.action === 'ACCEPT' || data.action === 'STEP_UP' || data.action === 'HOLD'
+      ? data.action
+      : data.status === 'BLOCKED'
+        ? 'HOLD'
+        : 'ACCEPT';
+
   return {
     transaction_id: data.transaction_id,
+    action,
+    action_costs:
+      data.action_costs && typeof data.action_costs === 'object' ? data.action_costs : {},
     status: data.status === 'BLOCKED' ? 'BLOCKED' : 'APPROVED',
     fraud_probability: data.fraud_probability,
     execution_time_ms:
@@ -183,8 +196,26 @@ export async function analyzeTransaction(
     amount: input.amount,
   };
 
+  // Every optional field is omitted rather than sent as null, so the API applies its
+  // own documented default instead of receiving an explicit "unknown".
   if (typeof input.receiverVpaAgeDays === 'number') {
     body.receiver_vpa_age_days = input.receiverVpaAgeDays;
+  }
+
+  // Sent as a naive local string on purpose. The model reads hour-of-day straight
+  // off the timestamp, and serialising a Date here would hand the backend a UTC
+  // instant - turning a 02:00 IST payment into 20:30 the previous day and losing
+  // the odd-hour signal that one of the three scam signatures depends on.
+  if (input.timestamp) {
+    body.timestamp = input.timestamp;
+  }
+
+  if (input.senderCity?.trim()) {
+    body.sender_city = input.senderCity.trim();
+  }
+
+  if (typeof input.timeSinceLastTxnSec === 'number') {
+    body.time_since_last_txn_sec = input.timeSinceLastTxnSec;
   }
 
   const response = await fetchWithTimeout(

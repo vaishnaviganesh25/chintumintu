@@ -38,16 +38,16 @@ export function EvaluationPanel({ isLoading, results, threshold }: EvaluationPan
         
         {!isLoading && results && (
           <div className="space-y-6">
-            {/* Status Badge */}
+            {/* Merchant decision */}
             <div className="flex justify-center">
-              <StatusBadge status={results.status} />
+              <StatusBadge action={results.action} costs={results.action_costs} />
             </div>
             
             {/* Risk Gauge and Latency */}
             <div className="flex items-center justify-center space-x-8">
               <RiskGauge
                 probability={results.fraud_probability}
-                status={results.status}
+                action={results.action}
                 threshold={threshold}
               />
               <div className="flex flex-col space-y-2">

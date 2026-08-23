@@ -1,8 +1,9 @@
 import { motion } from 'framer-motion';
+import type { MerchantAction } from '../types';
 
 interface RiskGaugeProps {
   probability: number; // 0.0 to 1.0
-  status: 'BLOCKED' | 'APPROVED';
+  action: MerchantAction;
   /** The model's calibrated decision threshold, from /api/v1/health. */
   threshold?: number | null;
 }
@@ -10,17 +11,20 @@ interface RiskGaugeProps {
 /**
  * Circular fraud-risk readout.
  *
- * Colour follows the decision, not a fixed percentage band. The model ships with a
- * cost-calibrated threshold near 0.12 rather than 0.50, so a payment can be blocked
- * at 20% risk - and a gauge that turned green below 40% would contradict the BLOCKED
+ * Colour follows the decision, not a fixed percentage band, and carries all three
+ * outcomes. The merchant policy can challenge a payment at 8% risk and hold one at
+ * 30%, so a dial with fixed red/amber/green bands would routinely contradict the
  * badge sitting directly above it.
  */
-export function RiskGauge({ probability, status, threshold }: RiskGaugeProps) {
-  const percentage = Math.round(probability * 100);
-  const isBlocked = status === 'BLOCKED';
+const DIAL: Record<MerchantAction, { text: string; stroke: string }> = {
+  ACCEPT: { text: 'text-green-500', stroke: '#22c55e' },
+  STEP_UP: { text: 'text-amber-400', stroke: '#f59e0b' },
+  HOLD: { text: 'text-red-500', stroke: '#ef4444' },
+};
 
-  const textColor = isBlocked ? 'text-red-500' : 'text-green-500';
-  const strokeColor = isBlocked ? '#ef4444' : '#22c55e';
+export function RiskGauge({ probability, action, threshold }: RiskGaugeProps) {
+  const percentage = Math.round(probability * 100);
+  const { text: textColor, stroke: strokeColor } = DIAL[action] ?? DIAL.HOLD;
 
   const circumference = 2 * Math.PI * 45; // radius = 45
   const strokeDashoffset = circumference - probability * circumference;
