@@ -70,6 +70,38 @@ LEGIT_TINY_PROBE_SHARE = 0.004          # honest Rs.1-5 test transfers, no follo
 LEGIT_BIG_TICKET_SHARE = 0.012          # rare genuine Rs.15k-2L deposits/fees/gold
 
 # Fraud budget, expressed as incidents; the row counts must sum to N_FRAUD.
+# --------------------------------------------------------------------------- #
+# Merchant-side context
+# --------------------------------------------------------------------------- #
+# Categories carry different risk profiles in reality: electronics and travel are
+# chargeback-heavy because the goods are resaleable or the service is consumed before
+# the dispute window closes; utilities and grocery almost never dispute.
+MERCHANT_CATEGORIES = {
+    "electronics":  {"weight": 0.14, "margin": 0.06, "dispute_rate": 0.012},
+    "fashion":      {"weight": 0.18, "margin": 0.42, "dispute_rate": 0.008},
+    "travel":       {"weight": 0.08, "margin": 0.11, "dispute_rate": 0.015},
+    "digital":      {"weight": 0.12, "margin": 0.78, "dispute_rate": 0.006},
+    "grocery":      {"weight": 0.26, "margin": 0.14, "dispute_rate": 0.001},
+    "food_delivery":{"weight": 0.14, "margin": 0.22, "dispute_rate": 0.003},
+    "utilities":    {"weight": 0.08, "margin": 0.04, "dispute_rate": 0.000},
+}
+
+# India is UPI-first by a wide margin; the rest is included because a gateway sees it
+# and because `method` is a feature a merchant model would genuinely use.
+PAYMENT_METHODS = {"upi": 0.72, "card": 0.16, "netbanking": 0.07, "wallet": 0.05}
+
+# NPCI's UPI dispute codes, and the card-network equivalents for non-UPI methods.
+DISPUTE_CODES = {
+    "upi":        "NPCI_U008",
+    "card":       "VISA_10.4",
+    "netbanking": "NPCI_U008",
+    "wallet":     "NPCI_U008",
+}
+
+# RBI's harmonised turnaround time for customer-raised disputes. A representment has
+# to be filed inside it, which is why the responder surfaces the date.
+DISPUTE_TAT_DAYS = 30
+
 N_RUPEE1_PAIRS = 100                    # 2 rows per incident -> 200 rows
 N_VELOCITY_BURSTS = 30                  # 5 rows per burst     -> 150 rows
 TRANSFERS_PER_VICTIM = (2, 2, 1)        # how one burst's victims split the transfers
@@ -107,6 +139,22 @@ HOUR_WEIGHTS = np.array(
 HOUR_P = HOUR_WEIGHTS / HOUR_WEIGHTS.sum()
 
 COLUMNS = [
+    # Gateway identity. A merchant risk engine reasons about payments and orders, not
+    # about rows - and a dispute is raised against a payment id, not a UUID. These are
+    # what let Modules 5-7 handle a recognisable object instead of a synthetic record.
+    "payment_id",
+    "order_id",
+    "merchant_id",
+    "merchant_category",
+    "method",
+    # Counterfactual dispute fields: what the chargeback would look like if this
+    # payment settled. See `enrich_merchant_context` for why they are counterfactual.
+    "would_be_disputed",
+    "dispute_reason_code",
+    "dispute_respond_by",
+    # Incident identity. Every row belonging to one scam incident shares a ring_id,
+    # which is what makes a group-aware split and any graph feature possible.
+    "ring_id",
     "transaction_id",
     "timestamp",
     "sender_vpa",
@@ -471,7 +519,15 @@ def random_fraud_timestamp(rng: np.random.Generator, hours: range | None = None)
     )
 
 
-def _row(ts, sender, city, receiver, amount, age, pattern) -> dict:
+def _row(ts, sender, city, receiver, amount, age, pattern, ring_id: str | None = None) -> dict:
+    """One fraudulent row.
+
+    `ring_id` groups every row belonging to the same incident: both legs of a Rs.1
+    test, all five transfers into one mule. Without it a stratified split cuts through
+    incidents - the probe lands in train while its drain lands in test - and the model
+    is scored on receivers it was taught. Module 2 measures that effect at 59%; this
+    is the column that lets a group-aware split remove it.
+    """
     return {
         "timestamp": ts,
         "sender_vpa": sender,
@@ -481,6 +537,7 @@ def _row(ts, sender, city, receiver, amount, age, pattern) -> dict:
         "receiver_vpa_age_days": int(age),
         "is_fraud": 1,
         "fraud_pattern": pattern,
+        "ring_id": ring_id,
     }
 
 
@@ -498,7 +555,7 @@ def generate_rupee_one_test(
     rows: list[dict] = []
     victims = rng.choice(N_SENDERS, size=N_RUPEE1_PAIRS, replace=False)
 
-    for victim_idx in victims:
+    for incident, victim_idx in enumerate(victims):
         sender = senders.at[int(victim_idx), "vpa"]
         city = senders.at[int(victim_idx), "city"]
         receiver = make_personal_vpa(fake, rng, used)     # freshly opened mule account
@@ -519,8 +576,11 @@ def generate_rupee_one_test(
         big = float(np.clip(big, 10_000, 99_999))
         t_big = t_probe + timedelta(seconds=int(rng.integers(12, 61)))
 
-        rows.append(_row(t_probe, sender, city, receiver, 1.0, age, "rupee_1_test"))
-        rows.append(_row(t_big, sender, city, receiver, big, age, "rupee_1_test"))
+        # Both legs share a ring: they are one incident, and splitting them across
+        # train and test is exactly the leak Module 2 measures.
+        ring = f"ring_r1_{incident:04d}"
+        rows.append(_row(t_probe, sender, city, receiver, 1.0, age, "rupee_1_test", ring))
+        rows.append(_row(t_big, sender, city, receiver, big, age, "rupee_1_test", ring))
 
     return rows
 
@@ -538,7 +598,10 @@ def generate_new_vpa_velocity(
     """
     rows: list[dict] = []
 
-    for _ in range(N_VELOCITY_BURSTS):
+    for burst in range(N_VELOCITY_BURSTS):
+        # One mule account collecting from several victims is one ring - the star
+        # graph a row-level model can only ever see by proxy.
+        ring = f"ring_mule_{burst:04d}"
         mule = make_merchant_vpa(fake, rng, used) if rng.random() < 0.35 else make_personal_vpa(fake, rng, used)
         burst_start = random_fraud_timestamp(rng)
         if burst_start > END_DATE - timedelta(minutes=20):
@@ -560,7 +623,7 @@ def generate_new_vpa_velocity(
                 rows.append(
                     _row(
                         burst_start + timedelta(seconds=offset),
-                        sender, city, mule, amount, 0, "new_vpa_velocity",
+                        sender, city, mule, amount, 0, "new_vpa_velocity", ring,
                     )
                 )
                 offset += int(rng.integers(30, 210))      # repeat transfer, seconds apart
@@ -581,7 +644,7 @@ def generate_odd_hour_phishing(
     rows: list[dict] = []
     victims = rng.choice(N_SENDERS, size=N_ODD_HOUR, replace=False)
 
-    for victim_idx in victims:
+    for case, victim_idx in enumerate(victims):
         sender = senders.at[int(victim_idx), "vpa"]
         city = senders.at[int(victim_idx), "city"]
         receiver = make_personal_vpa(fake, rng, used)
@@ -591,7 +654,10 @@ def generate_odd_hour_phishing(
         # Offset above the Rs.20,000 floor instead of clipped to it, so amounts do
         # not bunch up on the threshold.
         amount = float(min(20_000 + np.exp(rng.normal(9.4, 0.8)), 99_999))
-        rows.append(_row(ts, sender, city, receiver, amount, int(rng.integers(0, 21)), "odd_hour_phishing"))
+        # Each odd-hour drain is a standalone incident; its own ring keeps the group
+        # split well-defined without pretending these are related.
+        rows.append(_row(ts, sender, city, receiver, amount, int(rng.integers(0, 21)),
+                         "odd_hour_phishing", f"ring_odd_{case:04d}"))
 
     return rows
 
@@ -599,8 +665,101 @@ def generate_odd_hour_phishing(
 # --------------------------------------------------------------------------- #
 # Assembly
 # --------------------------------------------------------------------------- #
-def finalize(df: pd.DataFrame) -> pd.DataFrame:
-    """Add UUIDs, derive `time_since_last_txn_sec` per sender, order as a stream."""
+def _rzp_id(prefix: str, rng: np.random.Generator) -> str:
+    """A Razorpay-shaped identifier: `pay_` / `order_` / `acc_` plus 14 alphanumerics."""
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    return prefix + "".join(rng.choice(list(alphabet), size=14))
+
+
+def _category_for(receiver_local: str, rng: np.random.Generator) -> str:
+    """Infer a merchant category from the payee handle, falling back to the mix.
+
+    QR terminals and kirana handles really are grocery; billers really are utilities.
+    Inferring where the VPA already says so keeps the category consistent with the
+    rest of the row instead of being noise bolted on top.
+    """
+    if receiver_local.startswith(("bill.", "recharge.", "fees.", "rent.", "emi.")):
+        return "utilities"
+    if receiver_local.endswith((".kirana", ".mart", ".store")) or re.fullmatch(r"q\d{6,}", receiver_local):
+        return "grocery"
+    if receiver_local.endswith(".foods"):
+        return "food_delivery"
+
+    names = list(MERCHANT_CATEGORIES)
+    weights = np.array([MERCHANT_CATEGORIES[n]["weight"] for n in names])
+    return str(rng.choice(names, p=weights / weights.sum()))
+
+
+def enrich_merchant_context(df: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
+    """Attach gateway identity, merchant context and dispute metadata.
+
+    The generator produces payer-side UPI rows because that is what the scam
+    signatures are defined over. A gateway sees the same money from the other side:
+    a payment against an order, settled to a merchant account, in a category with its
+    own margin and dispute profile. This layer adds that view without touching the
+    behaviour the signatures depend on.
+
+    **The dispute fields are counterfactual, and deliberately so.** Whether a payment
+    is actually disputed depends on whether it settled, which depends on the policy
+    being evaluated - so baking a realised dispute into the CSV would leak the outcome
+    of the decision the model is being asked to make. `would_be_disputed` answers a
+    different question: *if this payment settled, would the customer raise a
+    chargeback?* For fraud, yes. For legitimate traffic, at the category's own base
+    rate, which is where friendly fraud and non-delivery disputes live. What actually
+    becomes a dispute is computed per policy in `merchant_policy.portfolio_cost`.
+    """
+    df = df.copy()
+    n = len(df)
+
+    receiver_local = df["receiver_vpa"].astype(str).str.split("@").str[0].str.lower()
+
+    # One merchant per payee handle, stable across the whole file - a merchant that
+    # changed identity between two of its own payments would make every downstream
+    # aggregate meaningless.
+    receivers = receiver_local.unique()
+    merchant_ids = {r: _rzp_id("acc_", rng) for r in receivers}
+    categories = {r: _category_for(r, rng) for r in receivers}
+
+    df["merchant_id"] = receiver_local.map(merchant_ids)
+    df["merchant_category"] = receiver_local.map(categories)
+
+    methods = list(PAYMENT_METHODS)
+    weights = np.array([PAYMENT_METHODS[m] for m in methods])
+    df["method"] = rng.choice(methods, size=n, p=weights / weights.sum())
+
+    df["payment_id"] = [_rzp_id("pay_", rng) for _ in range(n)]
+    df["order_id"] = [_rzp_id("order_", rng) for _ in range(n)]
+
+    # Fraud is disputed by the victim if it settles. Legitimate traffic disputes at
+    # the category's base rate - non-delivery, not-as-described, friendly fraud.
+    base_rate = df["merchant_category"].map(
+        {c: v["dispute_rate"] for c, v in MERCHANT_CATEGORIES.items()}
+    ).to_numpy()
+    legit_dispute = rng.random(n) < base_rate
+    df["would_be_disputed"] = np.where(df["is_fraud"] == 1, 1, legit_dispute.astype(int))
+
+    df["dispute_reason_code"] = np.where(
+        df["would_be_disputed"] == 1,
+        df["method"].map(DISPUTE_CODES).fillna("NPCI_U008"),
+        "",
+    )
+    # A representment must be filed inside RBI's harmonised turnaround time.
+    df["dispute_respond_by"] = np.where(
+        df["would_be_disputed"] == 1,
+        (pd.to_datetime(df["timestamp"]) + timedelta(days=DISPUTE_TAT_DAYS))
+        .dt.strftime("%Y-%m-%d"),
+        "",
+    )
+
+    # Legitimate rows belong to no incident. Fraud rows already carry theirs.
+    if "ring_id" not in df.columns:
+        df["ring_id"] = ""
+    df["ring_id"] = df["ring_id"].fillna("")
+    return df
+
+
+def finalize(df: pd.DataFrame, rng: np.random.Generator | None = None) -> pd.DataFrame:
+    """Add ids, derive `time_since_last_txn_sec` per sender, order as a stream."""
     df = df.copy()
     df["timestamp"] = pd.to_datetime(df["timestamp"])
 
@@ -612,6 +771,7 @@ def finalize(df: pd.DataFrame) -> pd.DataFrame:
 
     df = df.sort_values("timestamp", kind="mergesort").reset_index(drop=True)
     df["transaction_id"] = [str(uuid.uuid4()) for _ in range(len(df))]
+    df = enrich_merchant_context(df, rng if rng is not None else np.random.default_rng(SEED))
     return df[COLUMNS]
 
 
