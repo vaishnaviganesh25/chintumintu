@@ -205,18 +205,35 @@ def fraud_base_value(explainer) -> float:
 def global_explanations(explainer, transformed: pd.DataFrame, names: list[str]) -> pd.DataFrame:
     """Beeswarm and bar plots at feature level, plus a ranked concept-level table."""
     values = fraud_class_values(explainer.shap_values(transformed, check_additivity=False))
+    concepts = to_concepts(values, names)
 
-    # The plots stay at feature level: a beeswarm needs one feature value per dot,
-    # which a summed concept does not have.
+    # The beeswarm is drawn at *concept* level, like everything else in this module.
+    #
+    # It used to pass feature-level SHAP values with concept labels attached, which
+    # printed "transaction amount" twice and "age of the receiving UPI ID" four times
+    # on the same chart - the exact splitting-of-credit this module exists to remove,
+    # in the one artifact most people look at first. It contradicted the thesis on
+    # sight.
+    #
+    # A summed concept has no single feature value for the colour axis, which is why
+    # it was left at feature level originally. The fix is to colour each concept by
+    # its dominant member column - the one carrying most of the concept's magnitude -
+    # so "higher value, redder dot" still reads correctly. The bar heights are the
+    # summed contributions; only the colour comes from one representative column.
+    per_feature_abs = pd.Series(np.abs(values).mean(axis=0), index=names)
+    dominant_values = pd.DataFrame(index=transformed.index)
+    for concept in concepts.columns:
+        members = [n for n in names if concept_of(n) == concept]
+        dominant_values[concept] = transformed[per_feature_abs[members].idxmax()]
+
     plt.figure()
-    shap.summary_plot(values, transformed, feature_names=[concept_of(n) for n in names],
-                      max_display=16, show=False)
-    plt.title("What drives fraud predictions", fontsize=14)
+    shap.summary_plot(concepts.to_numpy(), dominant_values,
+                      feature_names=list(concepts.columns), max_display=14, show=False)
+    plt.title("What drives fraud predictions (contributions summed per concept)", fontsize=13)
     plt.tight_layout()
     plt.savefig(EXPLAIN_DIR / "shap_beeswarm.png", dpi=130, bbox_inches="tight")
     plt.close()
 
-    concepts = to_concepts(values, names)
     ranked = pd.DataFrame({
         "concept": concepts.columns,
         "mean_abs_shap": concepts.abs().mean(axis=0).to_numpy(),
@@ -224,8 +241,8 @@ def global_explanations(explainer, transformed: pd.DataFrame, names: list[str]) 
 
     # Direction: correlate each concept's dominant column with its own contribution.
     # "Does a higher value push this transaction towards fraud?" - the same question
-    # the colour axis of a beeswarm answers.
-    per_feature_abs = pd.Series(np.abs(values).mean(axis=0), index=names)
+    # the colour axis of the beeswarm above answers, and computed from the same
+    # dominant column so the two cannot disagree.
     directions = []
     for concept in ranked["concept"]:
         members = [n for n in names if concept_of(n) == concept]
