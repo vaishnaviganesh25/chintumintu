@@ -75,18 +75,50 @@ def test_single_row_yields_the_same_columns_as_a_batch(single_row):
 
 
 def test_row_features_are_independent_of_batch_position(single_row):
-    """A transaction scored alone and the same transaction scored inside a batch agree.
+    """A transaction scored alone and inside a batch agrees - given the same neighbours.
 
-    Only the lag features may legitimately differ, and only when a predecessor from
-    the same sender is present - so this uses a distinct sender for the row under test.
+    Two families of feature legitimately depend on other rows, and the test has to
+    hold both constant to mean anything:
+
+    * lag features look at the same *sender's* previous payment;
+    * graph features count the same *receiver's* recent payers.
+
+    So the row under test uses a sender and a receiver that appear nowhere else in the
+    batch. Sharing either would make the two results differ by design - which is the
+    point of those features, not a bug in them.
     """
-    target = raw_txn(sender="solo.payer@oksbi", amount=7400.0)
+    target = raw_txn(sender="solo.payer@oksbi", receiver="solo.shop@paytm", amount=7400.0)
     alone = engineer_features(pd.DataFrame([target])).iloc[0]
 
-    crowd = pd.DataFrame([raw_txn(sender="other.a@ybl"), target, raw_txn(sender="other.b@ybl")])
+    crowd = pd.DataFrame([
+        raw_txn(sender="other.a@ybl", receiver="other.shop.a@paytm"),
+        target,
+        raw_txn(sender="other.b@ybl", receiver="other.shop.b@paytm"),
+    ])
     in_batch = engineer_features(crowd).iloc[1]
 
     pd.testing.assert_series_equal(alone, in_batch, check_names=False)
+
+
+def test_a_shared_receiver_is_exactly_what_the_graph_features_should_notice():
+    """The complement of the test above, so the isolation there is not mistaken for
+    a claim that batch position never matters.
+
+    A payment into an account two other people have just paid *must* score differently
+    from the same payment into a quiet account. That is the mule signal.
+    """
+    target = raw_txn(sender="third.payer@oksbi", receiver="mule@paytm", amount=7400.0)
+
+    alone = engineer_features(pd.DataFrame([target])).iloc[0]
+    crowded = engineer_features(pd.DataFrame([
+        raw_txn(sender="first@ybl", receiver="mule@paytm"),
+        raw_txn(sender="second@axl", receiver="mule@paytm"),
+        target,
+    ])).iloc[2]
+
+    assert alone["receiver_fanin_10m"] == 1
+    assert crowded["receiver_fanin_10m"] == 3
+    assert crowded["receiver_is_hub"] == 1
 
 
 def test_type_partition_covers_every_column(single_row):

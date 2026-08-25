@@ -103,6 +103,19 @@ FEATURE_CONCEPTS: dict[str, str] = {
     "sender_bank_handle": "sender's bank handle",
     "receiver_bank_handle": "receiver's bank handle",
     "sender_city": "sender's city",
+    "merchant_category": "merchant category",
+    "payment_method": "payment method",
+    # Relational context. The three receiver-side columns collapse into one concept
+    # on purpose: fan-in over ten minutes, fan-in over an hour and the hub flag are
+    # three encodings of a single real-world fact - how many different people have
+    # just paid this account - and splitting credit between them would understate the
+    # mule signal in exactly the way this module exists to prevent.
+    "receiver_fanin_10m": "how many different people have just paid this account",
+    "receiver_fanin_1h": "how many different people have just paid this account",
+    "receiver_is_hub": "how many different people have just paid this account",
+    "receiver_txn_count_10m": "how fast this account is collecting",
+    "receiver_amount_10m": "how much this account has just collected",
+    "sender_fanout_1h": "how many accounts this payer is sending to",
 }
 
 # Longest first so `prev_amount_ratio` never gets matched by `prev_amount`.
@@ -327,6 +340,19 @@ def describe(concept: str, raw: pd.Series, feat: pd.Series) -> str:
         return str(raw["sender_city"])
     if concept == "round-figure amount":
         return "yes" if feat["is_round_amount"] else "no"
+    if concept == "how many different people have just paid this account":
+        n = int(feat.get("receiver_fanin_10m", 0))
+        return f"{n} in the last 10 minutes" if n else ""
+    if concept == "how fast this account is collecting":
+        n = int(feat.get("receiver_txn_count_10m", 0))
+        return f"{n} payment{'s' if n != 1 else ''} in 10 minutes"
+    if concept == "how much this account has just collected":
+        return f"Rs.{feat.get('receiver_amount_10m', 0):,.0f} in 10 minutes"
+    if concept == "how many accounts this payer is sending to":
+        n = int(feat.get("sender_fanout_1h", 0))
+        return f"{n} in the last hour"
+    if concept == "merchant category":
+        return str(raw.get("merchant_category", "")) if hasattr(raw, "get") else ""
     return ""
 
 

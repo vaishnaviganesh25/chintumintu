@@ -61,6 +61,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from audit_store import AuditStore, store as default_store
+from razorpay_client import (
+    REASON_DESCRIPTIONS,
+    DisputeEntity,
+    DisputeEvidence,
+    build_dispute_entity,
+    to_paise,
+)
 
 log = logging.getLogger("finguard.chargeback")
 
@@ -75,22 +82,14 @@ MAX_TOKENS = 8_000
 # but not an unbounded one, because this runs inside a request handler.
 TIMEOUT_SECONDS = 90.0
 
-# Dispute categories this module can build a case for. The model picks one of these
-# and nothing else: an invented reason code on a document bound for an acquirer is
-# worse than no document at all.
-REASON_CODES: dict[str, str] = {
-    "VISA_10.4": "Visa 10.4 - Other Fraud, Card Absent Environment",
-    "VISA_13.1": "Visa 13.1 - Merchandise or Services Not Received",
-    "VISA_13.3": "Visa 13.3 - Not as Described or Defective",
-    "MC_4837": "Mastercard 4837 - No Cardholder Authorisation",
-    "MC_4853": "Mastercard 4853 - Cardholder Dispute",
-    "NPCI_U008": "NPCI U008 - Unauthorised UPI transaction reported by remitter",
-    "NPCI_U009": "NPCI U009 - Goods or services not delivered",
-}
-
-ReasonCode = Literal[
-    "VISA_10.4", "VISA_13.1", "VISA_13.3", "MC_4837", "MC_4853", "NPCI_U008", "NPCI_U009",
-]
+# The reason code is no longer the model's to choose.
+#
+# It arrives on the dispute entity, set by the issuer, and it determines which evidence
+# the packet must carry - shipping proof for a non-delivery claim, access logs for a
+# digital one. Letting a language model pick it meant letting it decide what evidence
+# was required, which is backwards. `razorpay_client.classify_reason` does the triage
+# deterministically and this module reads the result.
+REASON_CODES = REASON_DESCRIPTIONS
 
 
 # --------------------------------------------------------------------------- #
@@ -109,9 +108,14 @@ class EvidenceItem(BaseModel):
 
 
 class RepresentmentPacket(BaseModel):
-    """A submittable dispute response, or a reasoned decision not to submit one."""
+    """A submittable dispute response, or a reasoned decision not to submit one.
 
-    reason_code: ReasonCode
+    The prose fields map onto Razorpay's `evidence` sub-object - `summary` and
+    `explanation_letter` are their field names, not ours. `evidence_cited` is local:
+    it records where each claim came from, which the API has no field for and an
+    auditor very much wants.
+    """
+
     recommendation: Literal["represent", "accept_liability"] = Field(
         ...,
         description="represent = fight the dispute. accept_liability = concede, because "
@@ -122,15 +126,21 @@ class RepresentmentPacket(BaseModel):
         description="Probability of winning if represented. Be conservative - an "
                     "over-confident packet wastes a filing.",
     )
-    summary: str = Field(..., description="Two or three sentences an ops lead can act on.")
+    summary: str = Field(
+        ...,
+        description="Two or three sentences an ops lead can act on. Becomes "
+                    "`evidence.summary` on the Razorpay dispute.",
+    )
     compelling_evidence: list[EvidenceItem] = Field(
         default_factory=list,
-        description="Evidence supporting the merchant. Empty is a valid and honest answer.",
+        description="Evidence supporting the merchant, each tied to where it came "
+                    "from. Empty is a valid and honest answer.",
     )
     argument: str = Field(
         ...,
-        description="The narrative submitted to the issuer. Factual, no adjectives, "
-                    "every claim traceable to the case file.",
+        description="The narrative submitted to the issuer, becoming "
+                    "`evidence.explanation_letter`. Factual, no adjectives, every "
+                    "claim traceable to the case file.",
     )
     issuer_rebuttals: list[str] = Field(
         default_factory=list,
@@ -182,6 +192,7 @@ def build_case_file(
     dispute_reason: str,
     store: AuditStore | None = None,
     history_window: int = 10,
+    dispute: DisputeEntity | None = None,
 ) -> dict[str, Any]:
     """Assemble everything known about a disputed payment. No model involved.
 
@@ -211,9 +222,16 @@ def build_case_file(
     concepts = decision["shap_concepts"]
     top_drivers = sorted(concepts.items(), key=lambda kv: -abs(kv[1]))[:6]
 
+    dispute = dispute or build_dispute_entity(decision, dispute_reason)
+
     return {
         "decision_id": decision_id,
         "dispute_reason_stated_by_issuer": dispute_reason,
+        # The Razorpay dispute this packet answers. Its reason code decides which
+        # evidence is required, and `respond_by` is the clock the whole exercise runs
+        # against - both belong in front of whoever is drafting.
+        "dispute": dispute.model_dump(exclude_none=True),
+        "hours_left_to_respond": round(dispute.hours_to_respond(), 1),
         "payment": {
             "transaction_id": decision["transaction_id"],
             "amount_inr": decision["amount"],
@@ -258,7 +276,7 @@ def build_case_file(
             }
             for d in same_receiver
         ],
-        "available_reason_codes": REASON_CODES,
+        "reason_code_meanings": REASON_CODES,
     }
 
 
@@ -275,17 +293,6 @@ def deterministic_packet(case_file: dict[str, Any], why: str) -> RepresentmentPa
     """
     payment = case_file["payment"]
     engine = case_file["engine_decision"]
-    stated = case_file["dispute_reason_stated_by_issuer"].lower()
-
-    # Same triage a human would run first, expressed as rules.
-    if "not received" in stated or "not delivered" in stated:
-        code: ReasonCode = "NPCI_U009"
-    elif "not as described" in stated or "defective" in stated:
-        code = "VISA_13.3"
-    elif "upi" in stated or payment["receiver_vpa"]:
-        code = "NPCI_U008"
-    else:
-        code = "VISA_10.4"
 
     risky = engine["fraud_probability"] >= engine["threshold_in_force"]
     confirmed_fraud = any(
@@ -342,7 +349,6 @@ def deterministic_packet(case_file: dict[str, Any], why: str) -> RepresentmentPa
     """).strip()
 
     return RepresentmentPacket(
-        reason_code=code,
         recommendation=recommendation,
         confidence=confidence,
         summary=summary,
@@ -508,19 +514,107 @@ def draft_representment(case_file: dict[str, Any]) -> RepresentmentPacket:
     return packet
 
 
+def to_razorpay_evidence(
+    packet: RepresentmentPacket,
+    case_file: dict[str, Any],
+    submitted_at: datetime | None = None,
+) -> DisputeEvidence:
+    """Map a drafted packet onto Razorpay's `evidence` sub-object.
+
+    The mapping is code, not prompt. Which evidence field a claim belongs in follows
+    from the reason code - a non-delivery dispute needs `shipping_proof`, a digital
+    one needs `access_activity_log` - and that is a rule, not a judgement. Leaving it
+    to the model would mean the same evidence landing in different fields on different
+    runs, which an acquirer would reject and an auditor could not reconcile.
+
+    Fields hold document ids in the live API. Here they hold ledger references, which
+    is the honest local equivalent: a pointer to where the claim came from rather than
+    an assertion with no provenance.
+    """
+    reason = case_file["dispute"]["reason_code"]
+    decision_ref = f"finguard:decision:{case_file['decision_id']}"
+
+    evidence = DisputeEvidence(
+        amount=to_paise(case_file["payment"]["amount_inr"]),
+        summary=packet.summary,
+        explanation_letter=[packet.argument],
+        # The risk assessment made before authorisation, and the account history
+        # behind it. Razorpay has no field for "our model scored this", so it goes in
+        # `others` with its provenance rather than being forced into a proof field it
+        # is not.
+        others=[
+            {
+                "type": "risk_assessment",
+                "description": (
+                    f"Scored {case_file['engine_decision']['fraud_probability']:.4f} by "
+                    f"{case_file['engine_decision']['model']} at "
+                    f"{case_file['engine_decision']['scored_at']}, action "
+                    f"{case_file['engine_decision']['action']}."
+                ),
+                "reference": decision_ref,
+            },
+            *(
+                {"type": "cited_evidence", "description": f"{item.item}: {item.detail}",
+                 "reference": item.source}
+                for item in packet.compelling_evidence
+            ),
+        ],
+        submitted_at=int((submitted_at or datetime.now(timezone.utc)).timestamp()),
+    )
+
+    # Reason-specific proof fields. Populated with what the ledger can actually
+    # evidence; a field the ledger cannot speak to is left null rather than filled
+    # with something that sounds right.
+    if reason in ("FRAUD", "CHARGEBACK"):
+        evidence.access_activity_log = [decision_ref]
+        evidence.billing_proof = [f"finguard:payment:{case_file['payment']['transaction_id']}"]
+    elif reason == "GOODS_NOT_RECEIVED":
+        evidence.shipping_proof = None          # a payments engine has no shipping data
+        evidence.proof_of_service = [decision_ref]
+    elif reason == "GOODS_NOT_AS_DESCRIBED":
+        evidence.term_and_conditions = None
+        evidence.proof_of_service = [decision_ref]
+    elif reason == "DUPLICATE_PROCESSING":
+        evidence.billing_proof = [f"finguard:payment:{case_file['payment']['transaction_id']}"]
+    elif reason == "CREDIT_NOT_PROCESSED":
+        evidence.refund_confirmation = None     # the ledger records decisions, not refunds
+        evidence.refund_cancellation_policy = None
+
+    return evidence
+
+
 def respond_to_dispute(
     decision_id: str,
     dispute_reason: str,
     store: AuditStore | None = None,
 ) -> dict[str, Any]:
-    """End to end: ledger -> case file -> packet. Raises only if the decision is unknown."""
-    case_file = build_case_file(decision_id, dispute_reason, store=store)
+    """End to end: ledger -> Razorpay dispute -> case file -> packet -> evidence.
+
+    Returns the dispute with the drafted evidence attached, so the caller holds an
+    object shaped exactly like one Razorpay would return - and one that could be
+    submitted through their contest endpoint without reshaping.
+    """
+    store = store or default_store
+    decision = store.get_decision(decision_id)
+    if decision is None:
+        raise KeyError(decision_id)
+
+    dispute = build_dispute_entity(decision, dispute_reason)
+    case_file = build_case_file(decision_id, dispute_reason, store=store, dispute=dispute)
     packet = draft_representment(case_file)
+
+    # Evidence is only attached when the packet actually fights. Filing evidence
+    # alongside a concession is a contradiction the acquirer would have to resolve.
+    if packet.recommendation == "represent":
+        dispute.evidence = to_razorpay_evidence(packet, case_file)
 
     return {
         "decision_id": decision_id,
         "drafted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "reason_code_label": REASON_CODES[packet.reason_code],
+        "reason_code": dispute.reason_code,
+        "reason_code_label": REASON_CODES[dispute.reason_code],
+        "hours_left_to_respond": round(dispute.hours_to_respond(), 1),
+        "dispute": dispute.model_dump(exclude_none=True),
         "packet": packet.model_dump(),
         "case_file": case_file,
     }
@@ -545,7 +639,8 @@ if __name__ == "__main__":
         default_store.close()
 
     packet = result["packet"]
-    print(f"\n{result['reason_code_label']}")
+    print(f"\n{result['reason_code']} - {result['reason_code_label']}")
+    print(f"Respond within  : {result['hours_left_to_respond']:.0f} hours")
     print(f"Recommendation : {packet['recommendation']}  (confidence {packet['confidence']:.2f})")
     print(f"Drafted by     : {packet['generated_by']}")
     print(f"\n{packet['summary']}\n")

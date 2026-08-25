@@ -80,7 +80,7 @@ def no_ambient_credentials(monkeypatch):
 
 def _valid_packet(**overrides) -> RepresentmentPacket:
     payload = {
-        "reason_code": "VISA_10.4", "recommendation": "represent", "confidence": 0.5,
+        "recommendation": "represent", "confidence": 0.5,
         "summary": "s", "argument": "a",
     }
     payload.update(overrides)
@@ -104,12 +104,23 @@ def test_the_case_file_is_built_from_the_ledger_not_recomputed(case):
     assert case_file["explanation"]["reasons_given_at_the_time"]
 
 
-def test_case_file_assembly_is_deterministic(case):
-    """Built twice, identical. A document sent to an acquirer cannot rest on a
-    retrieval step that varies between runs."""
-    store, decision_id, first = case
-    second = build_case_file(decision_id, "Cardholder reports an unauthorised transaction",
-                             store=store)
+def test_evidence_retrieval_is_deterministic(audit_db):
+    """Built twice against the same dispute, identical.
+
+    The dispute entity is an *input*, not something retrieval invents - it carries a
+    fresh id and creation timestamp each time it is minted, exactly as Razorpay's does.
+    What has to be reproducible is the evidence gathered around it, because a document
+    sent to an acquirer cannot rest on a retrieval step that varies between runs.
+    """
+    from razorpay_client import build_dispute_entity
+
+    decision_id = _decision(audit_db)
+    decision = audit_db.get_decision(decision_id)
+    dispute = build_dispute_entity(decision, "unauthorised")
+
+    first = build_case_file(decision_id, "unauthorised", store=audit_db, dispute=dispute)
+    second = build_case_file(decision_id, "unauthorised", store=audit_db, dispute=dispute)
+
     assert first == second
 
 
@@ -239,13 +250,13 @@ def test_a_response_that_does_not_validate_falls_back(case, monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "gm-test")
 
     for bad in (
-        {"reason_code": "VISA_99.9", "recommendation": "represent", "confidence": 0.5,
-         "summary": "s", "argument": "a"},                       # invented reason code
-        {"reason_code": "VISA_10.4", "recommendation": "represent", "confidence": 4.2,
+        {"recommendation": "represent", "confidence": 4.2,
          "summary": "s", "argument": "a"},                       # out-of-range confidence
-        {"reason_code": "VISA_10.4", "recommendation": "sue_them", "confidence": 0.5,
+        {"recommendation": "sue_them", "confidence": 0.5,
          "summary": "s", "argument": "a"},                       # unknown recommendation
-        {"reason_code": "VISA_10.4"},                            # missing everything else
+        {"recommendation": "represent", "confidence": -1.0,
+         "summary": "s", "argument": "a"},                       # negative confidence
+        {"recommendation": "represent"},                         # missing everything else
     ):
         with patch.object(agent, "_gemini", return_value=bad):
             packet = draft_representment(case_file)
@@ -299,16 +310,32 @@ def test_a_payment_the_engine_cleared_is_represented(audit_db):
     assert packet.recommendation == "represent"
 
 
-def test_the_reason_code_always_comes_from_the_enumerated_list(audit_db):
-    """A hallucinated network reason code on a document bound for an acquirer is worse
-    than no document. The schema is what makes that impossible, not the prompt."""
-    for reason in ("unauthorised transaction", "goods not received",
-                   "item not as described", "something else entirely"):
-        decision_id = _decision(audit_db, transaction_id=f"tx-{reason[:6]}")
-        case_file = build_case_file(decision_id, reason, store=audit_db)
-        packet = deterministic_packet(case_file, "test")
+@pytest.mark.parametrize(
+    ("complaint", "expected"),
+    [
+        ("Cardholder did not authorise this", "FRAUD"),
+        ("goods were never delivered", "GOODS_NOT_RECEIVED"),
+        ("item arrived defective", "GOODS_NOT_AS_DESCRIBED"),
+        ("I was charged twice", "DUPLICATE_PROCESSING"),
+        ("something else entirely", "CHARGEBACK"),
+    ],
+)
+def test_the_reason_code_is_triaged_deterministically_not_chosen_by_a_model(
+    audit_db, complaint, expected
+):
+    """The reason code decides which evidence the packet must carry.
 
-        assert packet.reason_code in REASON_CODES
+    Letting a language model pick it meant letting it decide what evidence was
+    required, which is backwards - and non-reproducible, so two runs could demand
+    different proof for the same complaint. It is keyword triage now, and it always
+    lands on a code Razorpay recognises.
+    """
+    decision_id = _decision(audit_db, transaction_id=f"tx-{complaint[:8]}")
+    result = respond_to_dispute(decision_id, complaint, store=audit_db)
+
+    assert result["reason_code"] == expected
+    assert result["reason_code"] in REASON_CODES
+    assert result["dispute"]["reason_description"] == REASON_CODES[expected]
 
 
 def test_every_packet_names_what_the_issuer_will_argue_back(case):
@@ -373,14 +400,18 @@ def test_the_provider_is_never_given_tools_or_the_scoring_path(case, monkeypatch
     assert "predict_proba" not in user_prompt
 
 
-def test_the_schema_sent_to_the_provider_pins_the_reason_codes(case):
+def test_the_schema_pins_the_recommendation_to_two_outcomes(case):
     """Enumerated in the schema, not merely requested in the prompt.
 
     A prompt can be ignored; an enum in a JSON Schema is enforced by the provider's
-    structured-output mode and, failing that, by validation on our side.
+    structured-output mode and, failing that, by validation on our side. `represent`
+    and `accept_liability` are the only two things a responder may conclude.
     """
-    enum = agent.PACKET_SCHEMA["properties"]["reason_code"]["enum"]
-    assert set(enum) == set(REASON_CODES)
+    enum = agent.PACKET_SCHEMA["properties"]["recommendation"]["enum"]
+    assert set(enum) == {"represent", "accept_liability"}
+
+    bounds = agent.PACKET_SCHEMA["properties"]["confidence"]
+    assert bounds["minimum"] == 0.0 and bounds["maximum"] == 1.0
 
 
 # --------------------------------------------------------------------------- #
@@ -392,6 +423,7 @@ def test_respond_to_dispute_returns_packet_and_case_file(audit_db):
 
     assert result["decision_id"] == decision_id
     assert result["reason_code_label"] in REASON_CODES.values()
+    assert result["dispute"]["entity"] == "dispute"
     assert result["packet"]["argument"].strip()
     assert result["case_file"]["decision_id"] == decision_id
 
