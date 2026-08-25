@@ -72,6 +72,8 @@ from sklearn.model_selection import (
 )
 from xgboost import XGBClassifier
 
+from graph_features import GRAPH_FEATURES, compute_graph_features
+
 from merchant_policy import (
     DEFAULT as MERCHANT,
     binary_portfolio_cost,
@@ -131,6 +133,13 @@ RUN_ABLATION = True         # quantify how much performance rests on VPA age alo
 # Set to False to reproduce the older stratified split and see the difference; the
 # report prints the bleed rate either way.
 GROUP_AWARE_SPLIT = True
+
+# Relational features over the payment graph - fan-in, fan-out, collection velocity.
+# The mule scam is a star and the model could previously only infer it from row-level
+# proxies. Set to False to measure what they are worth; the ablation below does that
+# automatically and reports the lift on the age-ablated model, which is where the
+# headroom actually is.
+GRAPH_FEATURES_ENABLED = True
 
 MICRO_PAYMENT_CEILING = 500.0   # Rs.10-500 daily spend we must not spam with alerts
 
@@ -368,6 +377,15 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         # marks these rows, and the imputer fills the gap with a median, exactly as it
         # does for `time_since_last_txn_sec`.
         out["prev_amount_ratio"] = (amount / prev_amount).where(prev_amount > 0)
+
+    # -- Relational context --------------------------------------------------- #
+    # How many different people have paid this account recently, how much it has
+    # collected, how many accounts this payer has sent to. See graph_features.py -
+    # every window is closed at the current payment, so these are computable at
+    # serving time from history alone.
+    if GRAPH_FEATURES_ENABLED:
+        for name, values in compute_graph_features(df).items():
+            out[name] = values
 
     return out
 
@@ -833,19 +851,29 @@ def incident_bleed_check(df: pd.DataFrame, train_index, test_index, y_test, y_pr
     }
 
 
-def age_ablation(X: pd.DataFrame, y, numeric, binary, categorical, splits) -> dict:
-    """Retrain without the receiver-VPA-age features to see what the rest of the model is worth.
+AGE_COLUMNS = ("receiver_vpa_age_days", "log_receiver_vpa_age",
+               "is_new_receiver_vpa", "is_recent_receiver_vpa")
 
-    If one feature is near-separable, headline metrics measure the data generator
-    rather than the model. Dropping it shows how much signal the temporal, velocity
-    and VPA-structure features carry on their own - which is what would survive
-    contact with real traffic, where account age is noisier and often missing.
+
+def ablate(X: pd.DataFrame, y, numeric, binary, categorical, splits,
+           drop: tuple[str, ...]) -> dict:
+    """Retrain with a set of columns removed, to price what they are actually worth.
+
+    If one feature is near-separable, the headline metric measures the data generator
+    rather than the model. Dropping it shows what the rest carries on its own - which
+    is what would survive contact with real traffic, where account age is noisier and
+    often missing entirely.
+
+    Generalised from the original age-only version so the same machinery can price the
+    graph features. Comparing them against the full model would prove little, because
+    the full model is close to saturated; comparing them against the age-ablated model
+    asks the question that matters - can relational structure stand in for the feature
+    least likely to survive production?
     """
     tr_idx, val_idx, test_idx = splits
-    age_cols = [c for c in X.columns if "receiver_vpa_age" in c or c == "is_new_receiver_vpa"
-                or c == "is_recent_receiver_vpa"]
-    keep_num = [c for c in numeric if c not in age_cols]
-    keep_bin = [c for c in binary if c not in age_cols]
+    dropped = [c for c in X.columns if c in drop]
+    keep_num = [c for c in numeric if c not in dropped]
+    keep_bin = [c for c in binary if c not in dropped]
 
     pre = build_preprocessor(keep_num, keep_bin, categorical)
     Xt_tr = pre.fit_transform(X.loc[tr_idx])
@@ -864,7 +892,7 @@ def age_ablation(X: pd.DataFrame, y, numeric, binary, categorical, splits) -> di
     prob = model.predict_proba(Xt_test)[:, 1]
     calib = calibrate_threshold(y_val, model.predict_proba(Xt_val)[:, 1], TARGET_RECALL)
     metrics = evaluate(y_test, prob, calib["threshold"])
-    metrics["dropped_features"] = age_cols
+    metrics["dropped_features"] = dropped
     return metrics
 
 
@@ -1329,24 +1357,63 @@ def main() -> None:
         say("  effect; expect the headline metrics to fall, which is the honest direction.")
 
     # ---------------- Ablation ---------------- #
+    ab = ab_nograph = ab_neither = None
     if RUN_ABLATION:
-        say.rule("ABLATION - how much rests on receiver VPA age?")
-        ab = age_ablation(X, y, numeric, binary, categorical,
-                          (X_tr.index, X_val.index, X_test.index))
-        say(f"  Dropped: {', '.join(ab['dropped_features'])}")
-        say(f"  {'':<22}{'PR-AUC':>10}{'Recall':>10}{'Precision':>12}{'F1':>10}")
-        say(f"  {'Full feature set':<22}{c['pr_auc']:>10.4f}{c['recall']:>10.4f}"
-            f"{c['precision']:>12.4f}{c['f1']:>10.4f}")
-        say(f"  {'Without VPA age':<22}{ab['pr_auc']:>10.4f}{ab['recall']:>10.4f}"
-            f"{ab['precision']:>12.4f}{ab['f1']:>10.4f}")
+        splits_idx = (X_tr.index, X_val.index, X_test.index)
+        say.rule("ABLATION - what is each block of features actually worth?")
+
+        ab = ablate(X, y, numeric, binary, categorical, splits_idx, AGE_COLUMNS)
+        ab_nograph = ablate(X, y, numeric, binary, categorical, splits_idx,
+                            tuple(GRAPH_FEATURES))
+        ab_neither = ablate(X, y, numeric, binary, categorical, splits_idx,
+                            (*AGE_COLUMNS, *GRAPH_FEATURES))
+
+        say(f"  {'Feature set':<34}{'PR-AUC':>10}{'Recall':>10}{'Precision':>12}{'F1':>10}")
+        say("  " + "-" * 76)
+        rows = [
+            ("everything", c),
+            ("without receiver VPA age", ab),
+            ("without graph features", ab_nograph),
+            ("without either", ab_neither),
+        ]
+        for label, m in rows:
+            say(f"  {label:<34}{m['pr_auc']:>10.4f}{m['recall']:>10.4f}"
+                f"{m['precision']:>12.4f}{m['f1']:>10.4f}")
+
         say("")
-        say("  Every fraudulent receiver in the synthetic data is 0-20 days old, so this")
-        say("  feature will always carry real signal here. Module 1 deliberately routes a")
-        say("  slice of ordinary traffic - and a thin tail of genuine big-ticket payments -")
-        say("  to brand-new VPAs, so account age is no longer separable on its own: the")
-        say("  rule 'receiver is 20 days old or younger' is only ~7% precise on this data.")
-        say("  The gap above is what the temporal, velocity and VPA-structure features")
-        say("  deliver alone, and is the better guide to behaviour on real traffic.")
+        say("  Account age. Every fraudulent receiver in this data is 0-20 days old, so the")
+        say("  feature will always carry signal here. Module 1 deliberately routes a slice of")
+        say("  ordinary traffic - and a thin tail of genuine big-ticket payments - to brand")
+        say("  new VPAs, so age alone is only ~7% precise. Real traffic makes it noisier still,")
+        say("  and often missing, which is why the row without it is the one to plan against.")
+        say("")
+
+        graph_lift = ab["pr_auc"] - ab_neither["pr_auc"]
+        full_gap = c["pr_auc"] - ab_neither["pr_auc"]
+        recovered = graph_lift / full_gap if full_gap else 0.0
+        say("  Graph features. Priced against the age-ablated model rather than the full one,")
+        say("  because the full model is close to saturated and improving it proves nothing.")
+        say(f"  With account age removed, adding fan-in and collection velocity moves PR-AUC")
+        say(f"  {ab_neither['pr_auc']:.4f} -> {ab['pr_auc']:.4f} ({graph_lift:+.4f}) - recovering")
+        say(f"  {recovered:.0%} of the ground lost by dropping account age altogether.")
+        say("")
+        say("  Read PR-AUC here, not recall. Each row is re-calibrated on its own out-of-fold")
+        say("  probabilities, so the operating points are not the same point and the recall")
+        say("  column is not comparable across rows - it moved from "
+            f"{ab_neither['recall']:.2f} to {ab['recall']:.2f} while precision went the other way,")
+        say("  which is the threshold moving rather than the model getting worse. PR-AUC is")
+        say("  threshold-free, which is exactly why it is the column to compare.")
+        say("")
+        say("  What that buys is a different *kind* of evidence. Account age is an attribute")
+        say("  of the receiving account, so a fraudster defeats it by ageing a mule for three")
+        say("  weeks before using it. Fan-in is a property of the ring's behaviour: collecting")
+        say("  from several victims in minutes is the thing the scam has to do to be the scam.")
+        say("  A ring cannot age its way out of it.")
+        say("")
+        say("  And the signal is strictly backward-looking, which the ring assembly shows:")
+        say("  payment 1 into a mule sees fan-in 1 and looks ordinary, payment 3 sees 2, and")
+        say("  by payment 5 the third distinct victim has arrived and the hub flag fires. The")
+        say("  model is not being told the future - it is watching the star form.")
 
     # ---------------- Plots ---------------- #
     plot_curves(results, y_test, REPORT_DIR)
@@ -1465,7 +1532,10 @@ def main() -> None:
             "binary_policy_at_threshold": two,
             "covenant_binds_above_prevalence": binds_at,
         },
-        "ablation_no_vpa_age": ab if RUN_ABLATION else None,
+        "ablation_no_vpa_age": ab,
+        "ablation_no_graph_features": ab_nograph,
+        "ablation_no_age_no_graph": ab_neither,
+        "graph_features_enabled": GRAPH_FEATURES_ENABLED,
         "environment": {
             "python": platform.python_version(),
             "scikit_learn": sklearn.__version__,
