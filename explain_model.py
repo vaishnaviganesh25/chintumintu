@@ -488,10 +488,16 @@ def main() -> None:
     ranked = global_explanations(explainer, transformed, names)
 
     say.rule("GLOBAL DRIVERS (mean |SHAP| per concept)")
-    say(f"  {'Concept':<46}{'Mean |SHAP|':>13}   Direction")
-    say("  " + "-" * 82)
+    # Width driven by the data rather than a guessed constant. The graph concepts are
+    # long by design - "how many different people have just paid this account" is a
+    # sentence, because that is what makes the ranking readable by someone who has
+    # never heard of SHAP - and a fixed 46 columns silently broke the alignment the
+    # moment they were added.
+    width = max(46, max(len(c) for c in ranked["concept"].head(14)) + 2)
+    say(f"  {'Concept':<{width}}{'Mean |SHAP|':>13}   Direction")
+    say("  " + "-" * (width + 36))
     for _, r in ranked.head(14).iterrows():
-        say(f"  {r['concept']:<46}{r['mean_abs_shap']:>13.4f}   {r['direction']}")
+        say(f"  {r['concept']:<{width}}{r['mean_abs_shap']:>13.4f}   {r['direction']}")
 
     # ---------------- Per scam signature ---------------- #
     meta = df.loc[sample_idx, ["fraud_pattern", "amount", "is_fraud"]].copy()

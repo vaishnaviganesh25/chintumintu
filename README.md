@@ -814,6 +814,35 @@ The first payment genuinely looks ordinary, and the sign flips as the ring assem
 The model is not being shown the future; it is watching the star form. The **Ring
 graph** view in the dashboard replays exactly this, transfer by transfer.
 
+## The check that matters: are they used only where they should be?
+
+A feature that improves the headline by firing everywhere has not learned the scam, it
+has learned a shortcut. Module 3's per-signature attribution answers this directly, and
+the graph features appear for exactly one pattern:
+
+```
+new_vpa_velocity            +0.2356  age of the receiving UPI ID
+                            +0.1189  transaction amount
+                            +0.0480  how fast this account is collecting     <-
+                            +0.0352  how much this account has just collected <-
+
+odd_hour_phishing           +0.1556  transaction amount
+                            +0.1086  time of day
+                            +0.0799  age of the receiving UPI ID
+                            +0.0716  sent between 1 AM and 4 AM
+
+rupee_1_test (large leg)    +0.1595  age of the receiving UPI ID
+```
+
+The mule ring is now caught partly on ring structure. The odd-hour drain and the ₹1
+test are not — because they are not rings, and a fan-in feature that fired on them
+would be evidence the model had found a correlation rather than a mechanism.
+
+Globally, collection volume ranks **third of fourteen concepts** while fan-in ranks
+last: most traffic has a fan-in of one, so the flag is silent until it is not. That is
+the correct shape for a signal that identifies 85 rows out of 100,000 at 42% precision
+against a 0.5% base rate.
+
 Serving this needed a second history index. `TransactionHistory` keys by payer *and*
 payee — the lag features want "what did this sender do last", the graph features want
 "who else has paid this receiver". Indexing one side only is not a partial answer but

@@ -1,34 +1,29 @@
 concept,mean_abs_shap,direction
-age of the receiving UPI ID,0.17755105009150376,higher -> safer
-transaction amount,0.17506247650877546,higher -> riskier
-time of day,0.02962629105801038,higher -> safer
-gap since the sender's previous payment,0.02646278563484648,higher -> safer
-receiver looks like a registered merchant,0.026420499148283177,higher -> safer
-jump in size versus the previous payment,0.020482097917759418,higher -> riskier
-size of the sender's previous payment,0.017694426756087123,higher -> safer
-repeat payment to the same receiver,0.016465781218757063,higher -> riskier
-receiver's bank handle,0.012208593752821748,higher -> safer
-sent between 1 AM and 4 AM,0.012199955385028795,higher -> riskier
-shape of the receiver UPI ID,0.00422120183968555,higher -> riskier
-sender's city,0.0039580639217491435,higher -> safer
-round-figure amount,0.003738947179839841,higher -> safer
-sender's bank handle,0.002322889097371416,higher -> safer
-day of week,0.0019664402123995704,higher -> safer
-merchant category grocery,0.0019381121464966935,higher -> safer
-shape of the sender UPI ID,0.0012773032238694814,higher -> safer
-merchant category utilities,0.0012548060667032814,higher -> safer
-receiver UPI ID starts with a digit,0.0012283426698106623,higher -> riskier
-receiver UPI ID is a mobile number,0.00098511683655686,higher -> riskier
-sender's first recorded payment,0.0006496029280711906,higher -> riskier
-weekend transaction,0.00046333468389805167,higher -> safer
-sender UPI ID is a mobile number,0.00039326852282111757,higher -> riskier
-merchant category electronics,0.00034728633192992705,higher -> safer
-merchant category fashion,0.0003394088436528105,higher -> riskier
-payment method wallet,0.00031405793221582186,higher -> safer
-payment method upi,0.00029353783188110845,higher -> riskier
-merchant category digital,0.0002641945572146189,higher -> safer
-merchant category food delivery,0.0002583343097431918,higher -> safer
-payment method card,0.00020352667032736153,higher -> safer
-merchant category travel,0.0001568259251352852,higher -> safer
-payment method netbanking,0.00011927234681874239,higher -> safer
+age of the receiving UPI ID,0.1735696275498396,higher -> safer
+transaction amount,0.13677339088636314,higher -> riskier
+how much this account has just collected,0.060448244530777635,higher -> riskier
+time of day,0.025315078878991707,higher -> safer
+gap since the sender's previous payment,0.02248391532750988,higher -> safer
+receiver looks like a registered merchant,0.02047772702680836,higher -> safer
+how fast this account is collecting,0.015713375203170992,higher -> riskier
+jump in size versus the previous payment,0.014129627559877499,higher -> riskier
+sent between 1 AM and 4 AM,0.012008813868528881,higher -> riskier
+repeat payment to the same receiver,0.010891697418194152,higher -> riskier
+size of the sender's previous payment,0.010312682647140187,higher -> safer
+receiver's bank handle,0.009857053498248697,higher -> safer
+shape of the receiver UPI ID,0.003119004997370899,higher -> riskier
+how many different people have just paid this account,0.003041899220363336,higher -> riskier
+round-figure amount,0.0030057237625029983,higher -> safer
+sender's city,0.002917737693131904,higher -> safer
+merchant category,0.0025839641973315784,higher -> safer
+receiver UPI ID starts with a digit,0.0018300472593071467,higher -> riskier
+sender's bank handle,0.001775975608575237,higher -> safer
+day of week,0.0014840284039995383,higher -> safer
+receiver UPI ID is a mobile number,0.0010208454782258192,higher -> riskier
+shape of the sender UPI ID,0.0009817414874273877,higher -> safer
+payment method,0.0008096107831741535,higher -> riskier
+sender's first recorded payment,0.0004429831173475384,higher -> riskier
+weekend transaction,0.0003204007465023629,higher -> safer
+sender UPI ID is a mobile number,0.00022441470223587571,higher -> riskier
+how many accounts this payer is sending to,0.00021651923152158725,higher -> safer
 receiver UPI ID contains a scam keyword,0.0,no effect
