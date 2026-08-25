@@ -29,23 +29,23 @@ const rupees = (value: number) =>
   `₹${value.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 
 const ACTION_STYLE: Record<string, string> = {
-  HOLD: 'text-red-400 border-red-800 bg-red-950/40',
-  STEP_UP: 'text-amber-300 border-amber-800 bg-amber-950/40',
-  ACCEPT: 'text-green-400 border-green-800 bg-green-950/40',
+  HOLD: 'text-[var(--hold)] border-[var(--hold)] bg-[var(--hold-soft)]',
+  STEP_UP: 'text-[var(--challenge)] border-[var(--challenge)] bg-[var(--challenge-soft)]',
+  ACCEPT: 'text-[var(--accept)] border-[var(--accept)] bg-[var(--accept-soft)]',
 };
 
 const DISPOSITION_STYLE: Record<string, string> = {
-  confirmed_fraud: 'text-red-400',
-  false_positive: 'text-green-400',
-  unclear: 'text-gray-400',
+  confirmed_fraud: 'text-[var(--hold)]',
+  false_positive: 'text-[var(--accept)]',
+  unclear: 'text-[var(--muted)]',
 };
 
 function StatTile({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-3">
-      <dt className="text-[11px] uppercase tracking-wider text-gray-500">{label}</dt>
-      <dd className="text-xl font-semibold text-gray-100 tabular-nums mt-0.5">{value}</dd>
-      {hint && <p className="text-[11px] text-gray-500 mt-0.5">{hint}</p>}
+    <div className="bg-[var(--surface)] border border-[var(--rule)] rounded-lg px-4 py-3">
+      <dt className="text-[11px] uppercase tracking-wider text-[var(--faint)]">{label}</dt>
+      <dd className="text-xl font-semibold text-[var(--ink)] tabular-nums mt-0.5">{value}</dd>
+      {hint && <p className="text-[11px] text-[var(--faint)] mt-0.5">{hint}</p>}
     </div>
   );
 }
@@ -53,7 +53,7 @@ function StatTile({ label, value, hint }: { label: string; value: string; hint?:
 function StatsStrip({ stats }: { stats: OperatingStats | null }) {
   if (!stats) {
     return (
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-[var(--faint)]">
         Operating stats unavailable — the decision ledger is not reachable.
       </p>
     );
@@ -142,7 +142,7 @@ function CaseDetail({
     <div className="space-y-5">
       <div>
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <span className="text-lg font-semibold text-gray-100">{rupees(decision.amount)}</span>
+          <span className="text-lg font-semibold text-[var(--ink)]">{rupees(decision.amount)}</span>
           <span
             className={`text-[11px] font-bold px-2 py-0.5 rounded border ${
               ACTION_STYLE[decision.decision] ?? ACTION_STYLE.HOLD
@@ -150,12 +150,12 @@ function CaseDetail({
           >
             {decision.decision}
           </span>
-          <span className="text-xs text-gray-500 font-mono">{decision.decision_id}</span>
+          <span className="text-xs text-[var(--faint)] font-mono">{decision.decision_id}</span>
         </div>
-        <p className="text-sm text-gray-400 mt-1 break-all">
+        <p className="text-sm text-[var(--muted)] mt-1 break-all">
           {decision.sender_vpa} → {decision.receiver_vpa}
         </p>
-        <p className="text-xs text-gray-500 mt-1">
+        <p className="text-xs text-[var(--faint)] mt-1">
           {decision.txn_timestamp ?? decision.scored_at} · receiver{' '}
           {decision.receiver_vpa_age_days ?? '?'} days old · {decision.latency_ms} ms
         </p>
@@ -163,27 +163,27 @@ function CaseDetail({
 
       <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
         <div>
-          <dt className="text-[11px] uppercase tracking-wider text-gray-500">Risk</dt>
-          <dd className="text-gray-200 tabular-nums">
+          <dt className="text-[11px] uppercase tracking-wider text-[var(--faint)]">Risk</dt>
+          <dd className="text-[var(--ink)] tabular-nums">
             {scored ? decision.fraud_probability.toFixed(4) : 'no score'}
           </dd>
         </div>
         <div>
-          <dt className="text-[11px] uppercase tracking-wider text-gray-500">Threshold</dt>
-          <dd className="text-gray-200 tabular-nums">{decision.threshold.toFixed(4)}</dd>
+          <dt className="text-[11px] uppercase tracking-wider text-[var(--faint)]">Threshold</dt>
+          <dd className="text-[var(--ink)] tabular-nums">{decision.threshold.toFixed(4)}</dd>
         </div>
         <div>
-          <dt className="text-[11px] uppercase tracking-wider text-gray-500">Model</dt>
-          <dd className="text-gray-200 break-all">{decision.model_name}</dd>
+          <dt className="text-[11px] uppercase tracking-wider text-[var(--faint)]">Model</dt>
+          <dd className="text-[var(--ink)] break-all">{decision.model_name}</dd>
         </div>
         <div>
-          <dt className="text-[11px] uppercase tracking-wider text-gray-500">Policy</dt>
-          <dd className="text-gray-200">{decision.threshold_policy ?? '—'}</dd>
+          <dt className="text-[11px] uppercase tracking-wider text-[var(--faint)]">Policy</dt>
+          <dd className="text-[var(--ink)]">{decision.threshold_policy ?? '—'}</dd>
         </div>
       </dl>
 
       {!scored && (
-        <p className="text-xs text-amber-300 bg-amber-950/30 border border-amber-800 rounded px-3 py-2">
+        <p className="text-xs text-[var(--challenge)] border rounded px-3 py-2">
           Scored by a fallback rung — the model was unavailable, so there is no
           probability and no SHAP breakdown for this decision.
         </p>
@@ -191,10 +191,10 @@ function CaseDetail({
 
       {decision.reasons?.length > 0 && (
         <div>
-          <h4 className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">
+          <h4 className="text-[11px] uppercase tracking-wider text-[var(--faint)] mb-1">
             Recorded at decision time
           </h4>
-          <ul className="text-sm text-gray-300 space-y-0.5">
+          <ul className="text-sm text-[var(--ink)] space-y-0.5">
             {decision.reasons.map((reason) => (
               <li key={reason}>+ {reason}</li>
             ))}
@@ -204,10 +204,10 @@ function CaseDetail({
 
       {shapFeatures.length > 0 && (
         <div>
-          <h4 className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">
+          <h4 className="text-[11px] uppercase tracking-wider text-[var(--faint)] mb-1">
             Evidence replayed from the ledger
           </h4>
-          <p className="text-[11px] text-gray-500 mb-2">
+          <p className="text-[11px] text-[var(--faint)] mb-2">
             The contributions stored when the decision was made — not recomputed against
             today&apos;s model.
           </p>
@@ -216,8 +216,8 @@ function CaseDetail({
       )}
 
       {/* Reviewer actions ------------------------------------------------- */}
-      <div className="border-t border-gray-700 pt-4">
-        <h4 className="text-[11px] uppercase tracking-wider text-gray-500 mb-2">
+      <div className="border-t border-[var(--rule)] pt-4">
+        <h4 className="text-[11px] uppercase tracking-wider text-[var(--faint)] mb-2">
           Record an outcome
         </h4>
         <div className="flex flex-wrap gap-2">
@@ -227,7 +227,7 @@ function CaseDetail({
               type="button"
               onClick={() => void disposition(outcome)}
               disabled={busy !== null}
-              className="px-3 py-1.5 text-sm rounded-md border border-gray-600 bg-gray-700/60 text-gray-200 hover:bg-gray-700 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              className="px-3 py-1.5 text-sm rounded-md border border-[var(--rule-strong)] bg-[var(--sunk)] text-[var(--ink)] hover:bg-[var(--sunk)] disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
             >
               {busy === outcome ? 'Saving…' : outcome.replace('_', ' ')}
             </button>
@@ -236,14 +236,14 @@ function CaseDetail({
             type="button"
             onClick={() => void startDispute()}
             disabled={busy !== null}
-            className="px-3 py-1.5 text-sm rounded-md border border-cyan-700 bg-cyan-950/50 text-cyan-300 hover:bg-cyan-900/50 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            className="px-3 py-1.5 text-sm rounded-md border border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] hover:bg-[var(--accent-soft)] disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
           >
             {busy === 'dispute' ? 'Drafting…' : 'Raise chargeback'}
           </button>
         </div>
 
         {decision.dispositions && decision.dispositions.length > 0 && (
-          <ul className="mt-3 text-xs text-gray-400 space-y-0.5">
+          <ul className="mt-3 text-xs text-[var(--muted)] space-y-0.5">
             {decision.dispositions.map((d) => (
               <li key={d.disposition_id}>
                 <span className={DISPOSITION_STYLE[d.outcome] ?? ''}>{d.outcome}</span>{' '}
@@ -254,7 +254,7 @@ function CaseDetail({
         )}
 
         {error && (
-          <p className="text-sm text-red-400 mt-2" role="alert">
+          <p className="text-sm text-[var(--hold)] mt-2" role="alert">
             {error}
           </p>
         )}
@@ -270,48 +270,48 @@ function PacketView({ dispute }: { dispute: DisputeRecord }) {
   const conceding = packet.recommendation === 'accept_liability';
 
   return (
-    <div className="border-t border-gray-700 pt-4 space-y-3">
+    <div className="border-t border-[var(--rule)] pt-4 space-y-3">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h4 className="text-sm font-semibold text-gray-100">Representment packet</h4>
+        <h4 className="text-sm font-semibold text-[var(--ink)]">Representment packet</h4>
         <span
           className={`text-[11px] font-bold px-2 py-0.5 rounded border ${
             conceding
-              ? 'text-gray-300 border-gray-600 bg-gray-800'
-              : 'text-cyan-300 border-cyan-800 bg-cyan-950/40'
+              ? 'text-[var(--ink)] border-[var(--rule-strong)] bg-[var(--surface)]'
+              : 'text-[var(--accent)] border-[var(--accent)] bg-[var(--accent-soft)]'
           }`}
         >
           {conceding ? 'ACCEPT LIABILITY' : 'REPRESENT'}
         </span>
-        <span className="text-xs text-gray-500 tabular-nums">
+        <span className="text-xs text-[var(--faint)] tabular-nums">
           confidence {(packet.confidence * 100).toFixed(0)}%
         </span>
       </div>
 
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-[var(--faint)]">
         {dispute.reason_code_label ?? packet.reason_code} · drafted by{' '}
         <span className="font-mono">{packet.generated_by}</span>
       </p>
 
       {packet.degraded && (
-        <p className="text-xs text-amber-300 bg-amber-950/30 border border-amber-800 rounded px-3 py-2">
+        <p className="text-xs text-[var(--challenge)] border rounded px-3 py-2">
           No language model was reachable, so this is a template draft assembled from
           the same ledger evidence. It needs a human pass before filing — but a dispute
           has a deadline, so it exists rather than not.
         </p>
       )}
 
-      <p className="text-sm text-gray-300">{packet.summary}</p>
+      <p className="text-sm text-[var(--ink)]">{packet.summary}</p>
 
       {packet.compelling_evidence.length > 0 && (
         <div>
-          <h5 className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">
+          <h5 className="text-[11px] uppercase tracking-wider text-[var(--faint)] mb-1">
             Compelling evidence
           </h5>
-          <ul className="text-sm text-gray-300 space-y-1">
+          <ul className="text-sm text-[var(--ink)] space-y-1">
             {packet.compelling_evidence.map((item) => (
               <li key={item.item}>
-                <span className="text-gray-200">{item.item}:</span> {item.detail}{' '}
-                <span className="text-gray-500 text-xs">[{item.source}]</span>
+                <span className="text-[var(--ink)]">{item.item}:</span> {item.detail}{' '}
+                <span className="text-[var(--faint)] text-xs">[{item.source}]</span>
               </li>
             ))}
           </ul>
@@ -319,18 +319,18 @@ function PacketView({ dispute }: { dispute: DisputeRecord }) {
       )}
 
       <div>
-        <h5 className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">Argument</h5>
-        <pre className="text-xs text-gray-300 whitespace-pre-wrap font-sans bg-gray-900/60 border border-gray-700 rounded p-3 overflow-x-auto">
+        <h5 className="text-[11px] uppercase tracking-wider text-[var(--faint)] mb-1">Argument</h5>
+        <pre className="text-xs text-[var(--ink)] whitespace-pre-wrap font-sans bg-[var(--sunk)] border border-[var(--rule)] rounded p-3 overflow-x-auto">
           {packet.argument}
         </pre>
       </div>
 
       {packet.issuer_rebuttals.length > 0 && (
         <div>
-          <h5 className="text-[11px] uppercase tracking-wider text-gray-500 mb-1">
+          <h5 className="text-[11px] uppercase tracking-wider text-[var(--faint)] mb-1">
             Expect the issuer to argue
           </h5>
-          <ul className="text-sm text-gray-400 space-y-0.5">
+          <ul className="text-sm text-[var(--muted)] space-y-0.5">
             {packet.issuer_rebuttals.map((rebuttal) => (
               <li key={rebuttal}>− {rebuttal}</li>
             ))}
@@ -389,37 +389,37 @@ export function OpsConsole() {
       <StatsStrip stats={stats} />
 
       {error && (
-        <div className="bg-red-900/30 border border-red-500 text-red-400 px-4 py-3 rounded-lg" role="alert">
+        <div className="border text-[var(--hold)] px-4 py-3 rounded-lg" role="alert">
           {error}
         </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-          <h2 className="text-xl font-semibold text-cyan-400 mb-1">Alert queue</h2>
-          <p className="text-sm text-gray-400 mb-4">
+        <div className="fg-surface p-5">
+          <h2 className="text-[13px] font-semibold mb-1">Alert queue</h2>
+          <p className="text-sm text-[var(--muted)] mb-4">
             Payments held or challenged, newest first. Accepted payments are recorded too
             and are not shown here.
           </p>
 
           {loaded && queue.length === 0 && !error && (
-            <p className="text-sm text-gray-500 py-8 text-center">
+            <p className="text-sm text-[var(--faint)] py-8 text-center">
               Nothing waiting. Score a risky payment in the simulator and it will appear here.
             </p>
           )}
 
-          <ul className="divide-y divide-gray-700 max-h-[28rem] overflow-y-auto -mx-2">
+          <ul className="divide-y divide-[var(--rule)] max-h-[28rem] overflow-y-auto -mx-2">
             {queue.map((row) => (
               <li key={row.decision_id}>
                 <button
                   type="button"
                   onClick={() => void open(row)}
-                  className={`w-full text-left px-2 py-3 hover:bg-gray-700/40 focus:outline-none focus:ring-2 focus:ring-cyan-500 rounded ${
-                    selected?.decision_id === row.decision_id ? 'bg-gray-700/50' : ''
+                  className={`w-full text-left px-2 py-3 hover:bg-[var(--sunk)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] rounded ${
+                    selected?.decision_id === row.decision_id ? 'bg-[var(--sunk)]' : ''
                   }`}
                 >
                   <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-gray-100 font-medium tabular-nums">
+                    <span className="text-[var(--ink)] font-medium tabular-nums">
                       {rupees(row.amount)}
                     </span>
                     <span
@@ -430,10 +430,10 @@ export function OpsConsole() {
                       {row.decision}
                     </span>
                   </div>
-                  <p className="text-xs text-gray-400 truncate mt-0.5">
+                  <p className="text-xs text-[var(--muted)] truncate mt-0.5">
                     {row.sender_vpa} → {row.receiver_vpa}
                   </p>
-                  <p className="text-[11px] text-gray-500 mt-0.5">
+                  <p className="text-[11px] text-[var(--faint)] mt-0.5">
                     {row.fraud_probability >= 0
                       ? `risk ${row.fraud_probability.toFixed(3)}`
                       : 'no score (fallback)'}
@@ -452,12 +452,12 @@ export function OpsConsole() {
           </ul>
         </div>
 
-        <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-          <h2 className="text-xl font-semibold text-cyan-400 mb-4">Case file</h2>
+        <div className="fg-surface p-5">
+          <h2 className="text-xl font-semibold text-[var(--accent)] mb-4">Case file</h2>
           {selected ? (
             <CaseDetail decision={selected} onDispositioned={() => void refresh()} />
           ) : (
-            <p className="text-sm text-gray-500 py-12 text-center">
+            <p className="text-sm text-[var(--faint)] py-12 text-center">
               Select an alert to replay its evidence, record an outcome, or draft a
               chargeback response.
             </p>

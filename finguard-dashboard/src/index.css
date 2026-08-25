@@ -1,33 +1,311 @@
 @import 'tailwindcss';
 
-@layer base {
-  body {
-    @apply antialiased;
-    background-color: rgb(17 24 39);
-    color: rgb(243 244 246);
+/* ==========================================================================
+   FinGuard design tokens
+
+   One rule holds this together: no component may name a colour. Every surface,
+   rule and semantic state resolves through a token defined here, which is what
+   lets a second theme exist without the first one rotting the next time someone
+   adds a panel.
+
+   The two palettes are designed independently rather than inverted. Inverting a
+   light palette produces muddy greys and an accent that disappears — #2F3F9E is
+   a confident indigo on white and invisible on near-black — so each theme has
+   its own tuned values inside the same hue family. The identity carries; neither
+   is a by-product of the other.
+   ========================================================================== */
+
+@theme {
+  --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces — cool-biased neutrals, so white never reads as clinical */
+  --ground: #f7f8fa;
+  --surface: #ffffff;
+  --sunk: #eff2f6;
+  --raised: #ffffff;
+
+  /* Text */
+  --ink: #0b1220;
+  --muted: #5a6478;
+  --faint: #8992a6;
+
+  /* Structure */
+  --rule: #e3e7ee;
+  --rule-strong: #cdd4e0;
+
+  /* Interactive */
+  --accent: #2f3f9e;
+  --accent-hover: #253283;
+  --accent-soft: #2f3f9e14;
+  --accent-ink: #ffffff;
+
+  /* Decision semantics — deliberately desaturated. Tailwind's emerald-500 and
+     red-500 are the tell of a palette nobody chose. */
+  --accept: #0e6e4e;
+  --accept-soft: #0e6e4e14;
+  --challenge: #9a6206;
+  --challenge-soft: #9a620614;
+  --hold: #a32723;
+  --hold-soft: #a3272314;
+
+  /* SHAP diverging pair, tuned per theme rather than reused */
+  --shap-risk: #a32723;
+  --shap-safe: #0e6e4e;
+
+  /* Graph */
+  --node-victim: #5a6478;
+  --node-mule: #a32723;
+  --edge: #cdd4e0;
+
+  --shadow-sm: 0 1px 2px rgb(11 18 32 / 0.06);
+  --shadow-md: 0 1px 3px rgb(11 18 32 / 0.08), 0 8px 24px -12px rgb(11 18 32 / 0.16);
+
+  --radius: 6px;
+  --radius-sm: 4px;
+}
+
+/* System preference, only when the user has not chosen explicitly. Guarded so an
+   explicit light choice beats a dark OS. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --ground: #0a0e17;
+    --surface: #121826;
+    --sunk: #171e2e;
+    --raised: #1a2233;
+
+    --ink: #e4e8f0;
+    --muted: #97a1b5;
+    --faint: #6b7488;
+
+    --rule: #232b3c;
+    --rule-strong: #303a4e;
+
+    --accent: #8b9bf0;
+    --accent-hover: #a3b0f5;
+    --accent-soft: #8b9bf01f;
+    --accent-ink: #0a0e17;
+
+    --accept: #3fbf92;
+    --accept-soft: #3fbf921f;
+    --challenge: #e0a63c;
+    --challenge-soft: #e0a63c1f;
+    --hold: #f0736d;
+    --hold-soft: #f0736d1f;
+
+    --shap-risk: #f0736d;
+    --shap-safe: #3fbf92;
+
+    --node-victim: #97a1b5;
+    --node-mule: #f0736d;
+    --edge: #303a4e;
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-md: 0 1px 3px rgb(0 0 0 / 0.5), 0 8px 24px -12px rgb(0 0 0 / 0.7);
   }
-  
+}
+
+/* Explicit choice wins in both directions. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --ground: #0a0e17;
+  --surface: #121826;
+  --sunk: #171e2e;
+  --raised: #1a2233;
+
+  --ink: #e4e8f0;
+  --muted: #97a1b5;
+  --faint: #6b7488;
+
+  --rule: #232b3c;
+  --rule-strong: #303a4e;
+
+  --accent: #8b9bf0;
+  --accent-hover: #a3b0f5;
+  --accent-soft: #8b9bf01f;
+  --accent-ink: #0a0e17;
+
+  --accept: #3fbf92;
+  --accept-soft: #3fbf921f;
+  --challenge: #e0a63c;
+  --challenge-soft: #e0a63c1f;
+  --hold: #f0736d;
+  --hold-soft: #f0736d1f;
+
+  --shap-risk: #f0736d;
+  --shap-safe: #3fbf92;
+
+  --node-victim: #97a1b5;
+  --node-mule: #f0736d;
+  --edge: #303a4e;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 1px 3px rgb(0 0 0 / 0.5), 0 8px 24px -12px rgb(0 0 0 / 0.7);
+}
+
+@layer base {
+  * {
+    border-color: var(--rule);
+  }
+
+  html {
+    /* Set by the inline script in index.html before first paint, so a dark-mode
+       viewer never gets a white flash while the bundle loads. */
+    background: var(--ground);
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   #root {
     min-height: 100vh;
   }
+
+  /* Digits align in columns everywhere in this product — amounts, probabilities,
+     latencies, counts. Proportional figures make a table impossible to scan. */
+  .tnum,
+  table,
+  input[type='number'] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Focus is visible and consistent. A risk console gets operated by keyboard. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+  }
 }
 
-/* Custom cyber-themed scrollbar */
-.scrollbar-cyber::-webkit-scrollbar {
-  width: 0.5rem;
+@layer components {
+  .fg-surface {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+  }
+
+  .fg-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  .fg-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fg-input {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-sm);
+    padding: 7px 10px;
+    color: var(--ink);
+    font-size: 13px;
+    transition: border-color 0.12s ease;
+  }
+  .fg-input::placeholder {
+    color: var(--faint);
+  }
+  .fg-input:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+  .fg-input:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .fg-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--rule-strong);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 7px 12px;
+    cursor: pointer;
+    transition:
+      background-color 0.12s ease,
+      border-color 0.12s ease;
+  }
+  .fg-btn:hover:not(:disabled) {
+    background: var(--sunk);
+    border-color: var(--accent);
+  }
+  .fg-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .fg-btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+  }
+  .fg-btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+  }
 }
 
-.scrollbar-cyber::-webkit-scrollbar-track {
-  background-color: rgb(31 41 55);
+/* Scrollbars that belong to the palette rather than the browser. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border-radius: 6px;
+  border: 3px solid var(--ground);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--faint);
 }
 
-.scrollbar-cyber::-webkit-scrollbar-thumb {
-  background-color: rgb(6 182 212);
-  border-radius: 9999px;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
-.scrollbar-cyber::-webkit-scrollbar-thumb:hover {
-  background-color: rgb(34 211 238);
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
-
-

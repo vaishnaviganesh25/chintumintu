@@ -21,11 +21,11 @@ interface TransactionSimulatorProps {
 }
 
 const FIELD_CLASS =
-  'w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white ' +
-  'placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 ' +
+  'w-full px-3 py-2 bg-[var(--sunk)] border border-[var(--rule-strong)] rounded-md text-[var(--ink)] ' +
+  ' focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:border-[var(--accent)] ' +
   'disabled:opacity-60';
 
-const LABEL_CLASS = 'block text-sm font-medium text-gray-300 mb-2';
+const LABEL_CLASS = 'block text-sm font-medium text-[var(--ink)] mb-2';
 
 export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimulatorProps) {
   const [formData, setFormData] = useState<FormValues>(EMPTY_FORM);
@@ -106,22 +106,22 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
 
   const fieldError = (key: keyof ValidationErrors, id: string) =>
     errors[key] ? (
-      <span id={`${id}-error`} className="text-red-400 text-sm mt-1 block" role="alert">
+      <span id={`${id}-error`} className="text-[var(--hold)] text-sm mt-1 block" role="alert">
         {errors[key]}
       </span>
     ) : null;
 
   return (
-    <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-      <h2 className="text-xl font-semibold text-cyan-400 mb-1">Transaction Simulator</h2>
-      <p className="text-sm text-gray-400 mb-5">
+    <div className="fg-surface p-5">
+      <h2 className="text-[13px] font-semibold mb-1">Transaction Simulator</h2>
+      <p className="text-sm text-[var(--muted)] mb-5">
         Score a payment against the live model, or replay one of the scam signatures it
         was trained to catch.
       </p>
 
       {/* Scenario presets ------------------------------------------------ */}
       <fieldset className="mb-6" disabled={isLoading}>
-        <legend className="text-xs uppercase tracking-wider text-gray-500 mb-2">
+        <legend className="text-xs uppercase tracking-wider text-[var(--faint)] mb-2">
           Replay a signature
         </legend>
         <div className="flex flex-wrap gap-2">
@@ -134,11 +134,11 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
               title={scenario.blurb}
               className={
                 'px-3 py-1.5 rounded-md text-sm border transition-colors duration-150 ' +
-                'focus:outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-50 ' +
+                'focus:outline-none focus:ring-2 focus:ring-[var(--accent)] disabled:opacity-50 ' +
                 'disabled:cursor-not-allowed ' +
                 (scenario.hostile
-                  ? 'border-red-800 bg-red-950/40 text-red-300 hover:bg-red-900/40'
-                  : 'border-gray-600 bg-gray-700/60 text-gray-300 hover:bg-gray-700')
+                  ? 'border-[var(--hold)] text-[var(--hold)] hover:bg-[var(--hold-soft)]'
+                  : 'border-[var(--rule-strong)] bg-[var(--sunk)] text-[var(--ink)] hover:bg-[var(--sunk)]')
               }
             >
               {scenario.label}
@@ -146,7 +146,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
           ))}
         </div>
         {runningStep && (
-          <p className="text-xs text-cyan-400 mt-2" aria-live="polite">
+          <p className="text-xs text-[var(--accent)] mt-2" aria-live="polite">
             Running {runningStep}
           </p>
         )}
@@ -204,7 +204,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
           <div>
             <label className={LABEL_CLASS} htmlFor="receiverVpaAgeDays">
               Receiver VPA age (days)
-              <span className="text-gray-500 font-normal"> &mdash; optional</span>
+              <span className="text-[var(--faint)] font-normal"> &mdash; optional</span>
             </label>
             <input
               id="receiverVpaAgeDays"
@@ -224,7 +224,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
             {errors.receiverVpaAgeDays ? (
               fieldError('receiverVpaAgeDays', 'receiverVpaAgeDays')
             ) : (
-              <span id="receiverVpaAgeDays-help" className="text-gray-500 text-xs mt-1 block">
+              <span id="receiverVpaAgeDays-help" className="text-[var(--faint)] text-xs mt-1 block">
                 The strongest single signal in the model. Left blank, the engine assumes an
                 established account and approves almost anything.
               </span>
@@ -235,7 +235,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
         <div>
           <label className={LABEL_CLASS} htmlFor="timestamp">
             Transaction time
-            <span className="text-gray-500 font-normal"> &mdash; optional</span>
+            <span className="text-[var(--faint)] font-normal"> &mdash; optional</span>
           </label>
           <input
             id="timestamp"
@@ -249,7 +249,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
           {errors.timestamp ? (
             fieldError('timestamp', 'timestamp')
           ) : (
-            <span id="timestamp-help" className="text-gray-500 text-xs mt-1 block">
+            <span id="timestamp-help" className="text-[var(--faint)] text-xs mt-1 block">
               Set an hour between 01:00 and 04:00 to reach the odd-hour phishing signature.
               Blank uses the server clock.
             </span>
@@ -260,7 +260,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
           <button
             type="button"
             onClick={() => setShowAdvanced((v) => !v)}
-            className="text-xs text-gray-400 hover:text-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500 rounded px-1 py-0.5"
+            className="text-xs text-[var(--muted)] hover:text-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] rounded px-1 py-0.5"
             aria-expanded={showAdvanced}
             aria-controls="advanced-fields"
           >
@@ -303,7 +303,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
                 {errors.timeSinceLastTxnSec ? (
                   fieldError('timeSinceLastTxnSec', 'timeSinceLastTxnSec')
                 ) : (
-                  <span id="gap-help" className="text-gray-500 text-xs mt-1 block">
+                  <span id="gap-help" className="text-[var(--faint)] text-xs mt-1 block">
                     Overrides the server-side history lookup.
                   </span>
                 )}
@@ -315,12 +315,12 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
         <button
           type="submit"
           disabled={!isFormValid || isLoading}
-          className="w-full bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 focus:ring-offset-gray-800"
+          className="w-full bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed text-[var(--ink)] font-medium py-2 px-4 rounded-md transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:ring-offset-2"
           title={!isFormValid ? 'Fill sender, receiver and amount to continue' : undefined}
         >
           {isLoading ? (
             <span className="flex items-center justify-center">
-              <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-[var(--ink)]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>

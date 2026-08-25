@@ -8,3 +8,7 @@ export { SHAPChart } from './SHAPChart';
 export { LoadingSpinner } from './LoadingSpinner';
 export { ApiStatus } from './ApiStatus';
 export { OpsConsole } from './OpsConsole';
+export { RingGraph } from './RingGraph';
+export { ModelCard } from './ModelCard';
+export { AppShell } from './AppShell';
+export { Icon } from './Icon';

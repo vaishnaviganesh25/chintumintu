@@ -17,25 +17,25 @@ interface StatusBadgeProps {
  */
 const PRESENTATION: Record<
   MerchantAction,
-  { label: string; hint: string; ring: string; dot: string }
+  { label: string; hint: string; tone: string; soft: string }
 > = {
   ACCEPT: {
     label: 'ACCEPT',
     hint: 'Fulfil the order',
-    ring: 'bg-green-900/30 text-green-400 border-green-500',
-    dot: 'bg-green-400',
+    tone: 'var(--accept)',
+    soft: 'var(--accept-soft)',
   },
   STEP_UP: {
     label: 'CHALLENGE',
     hint: '3-D Secure before capture',
-    ring: 'bg-amber-900/30 text-amber-300 border-amber-500',
-    dot: 'bg-amber-300',
+    tone: 'var(--challenge)',
+    soft: 'var(--challenge-soft)',
   },
   HOLD: {
     label: 'HOLD',
     hint: 'Review before fulfilment',
-    ring: 'bg-red-900/30 text-red-400 border-red-500',
-    dot: 'bg-red-400',
+    tone: 'var(--hold)',
+    soft: 'var(--hold-soft)',
   },
 };
 
@@ -57,27 +57,37 @@ export function StatusBadge({ action, costs }: StatusBadgeProps) {
         initial={{ scale: 0, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.4 }}
-        className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-bold border ${style.ring}`}
+        className="inline-flex items-center gap-2 px-3 py-1.5 text-[12px] font-semibold fg-mono"
+        style={{
+          color: style.tone,
+          background: style.soft,
+          border: `1px solid ${style.tone}`,
+          borderRadius: 999,
+          letterSpacing: '0.06em',
+        }}
         role="status"
         aria-live="polite"
       >
-        <span className={`w-2 h-2 rounded-full mr-2 ${style.dot}`} />
+        <span
+          style={{ width: 6, height: 6, borderRadius: 999, background: style.tone }}
+        />
         {style.label}
       </motion.div>
 
-      <p className="text-xs text-gray-400">{style.hint}</p>
+      <p className="text-[11.5px]" style={{ color: 'var(--muted)' }}>{style.hint}</p>
 
       {ranked.length > 0 && (
-        <dl className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-[11px] text-gray-500">
+        <dl className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-[11px] fg-mono" style={{ color: 'var(--faint)' }}>
           {ranked.map(([name, value]) => (
             <div key={name} className="flex items-center gap-1">
-              <dt className={name === action ? 'text-gray-300 font-semibold' : ''}>
+              <dt style={{ color: name === action ? 'var(--ink)' : undefined, fontWeight: name === action ? 600 : 400 }}>
                 {PRESENTATION[name as MerchantAction]?.label ?? name}
               </dt>
               <dd
-                className={
-                  name === action ? 'text-gray-300 font-semibold tabular-nums' : 'tabular-nums'
-                }
+                style={{
+                  color: name === action ? 'var(--ink)' : undefined,
+                  fontWeight: name === action ? 600 : 400,
+                }}
               >
                 {formatRupees(value as number)}
               </dd>

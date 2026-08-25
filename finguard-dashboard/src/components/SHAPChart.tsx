@@ -18,8 +18,20 @@ interface SHAPChartProps {
 const MAX_BARS = 8;
 const LABEL_LIMIT = 30;
 
-const RISK_COLOR = '#ef4444'; // red-500  - pushed towards fraud
-const SAFE_COLOR = '#10b981'; // emerald-500 - pushed towards legitimate
+/**
+ * The diverging pair, read from the theme rather than hardcoded.
+ *
+ * Recharts needs concrete colour strings, not CSS variables, so the tokens are
+ * resolved off the document at render time. Re-tuned per theme: the light palette's
+ * brick red is unreadable on a near-black ground, and the dark palette's coral is
+ * washed out on white. Reusing one pair across both is how a chart ends up illegible
+ * in whichever theme it was not designed in.
+ */
+function themeColour(token: string, fallback: string): string {
+  if (typeof window === 'undefined') return fallback;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+  return value || fallback;
+}
 
 /**
  * Diverging bar chart of per-concept SHAP contributions.
@@ -30,9 +42,12 @@ const SAFE_COLOR = '#10b981'; // emerald-500 - pushed towards legitimate
  * symmetric around zero and direction is carried by colour.
  */
 export function SHAPChart({ features }: SHAPChartProps) {
+  const riskColour = themeColour('--shap-risk', '#a32723');
+  const safeColour = themeColour('--shap-safe', '#0e6e4e');
+
   if (features.length === 0) {
     return (
-      <div className="flex items-center justify-center h-64 text-gray-400">
+      <div className="flex items-center justify-center h-64" style={{ color: 'var(--muted)' }}>
         No feature data available
       </div>
     );
@@ -62,15 +77,16 @@ export function SHAPChart({ features }: SHAPChartProps) {
     const { name, importance } = payload[0].payload;
     const towardsFraud = importance > 0;
     return (
-      <div className="bg-gray-800 border border-gray-600 rounded-lg p-3 shadow-lg max-w-xs">
-        <p className="text-gray-200 text-sm font-medium">{name}</p>
+      <div className="fg-surface p-3 max-w-xs" style={{ boxShadow: 'var(--shadow-md)' }}>
+        <p className="text-[13px] font-medium">{name}</p>
         <p
-          className={`font-semibold ${towardsFraud ? 'text-red-400' : 'text-emerald-400'}`}
+          className="fg-mono font-semibold"
+          style={{ color: towardsFraud ? riskColour : safeColour }}
         >
           {importance > 0 ? '+' : ''}
           {importance.toFixed(4)}
         </p>
-        <p className="text-gray-400 text-xs mt-1">
+        <p className="text-[11px] mt-1" style={{ color: 'var(--muted)' }}>
           {towardsFraud ? 'Increased the fraud score' : 'Reduced the fraud score'}
         </p>
       </div>
@@ -89,26 +105,26 @@ export function SHAPChart({ features }: SHAPChartProps) {
             <XAxis
               type="number"
               domain={[-bound, bound]}
-              tick={{ fill: '#9ca3af', fontSize: 11 }}
-              axisLine={{ stroke: '#4b5563' }}
-              tickLine={{ stroke: '#4b5563' }}
+              tick={{ fill: 'var(--faint)', fontSize: 10 }}
+              axisLine={{ stroke: 'var(--rule)' }}
+              tickLine={{ stroke: 'var(--rule)' }}
               tickFormatter={(value: number) => value.toFixed(2)}
             />
             <YAxis
               type="category"
               dataKey="label"
               width={190}
-              tick={{ fill: '#9ca3af', fontSize: 11 }}
-              axisLine={{ stroke: '#4b5563' }}
+              tick={{ fill: 'var(--faint)', fontSize: 10 }}
+              axisLine={{ stroke: 'var(--rule)' }}
               tickLine={false}
             />
-            <Tooltip content={customTooltip} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-            <ReferenceLine x={0} stroke="#6b7280" strokeWidth={1} />
+            <Tooltip content={customTooltip} cursor={{ fill: 'var(--accent-soft)' }} />
+            <ReferenceLine x={0} stroke="var(--rule-strong)" strokeWidth={1} />
             <Bar dataKey="importance" radius={[2, 2, 2, 2]} isAnimationActive={false}>
               {chartData.map((entry) => (
                 <Cell
                   key={entry.name}
-                  fill={entry.importance > 0 ? RISK_COLOR : SAFE_COLOR}
+                  fill={entry.importance > 0 ? riskColour : safeColour}
                 />
               ))}
             </Bar>
@@ -116,13 +132,13 @@ export function SHAPChart({ features }: SHAPChartProps) {
         </ResponsiveContainer>
       </div>
 
-      <div className="flex items-center justify-center gap-6 mt-3 text-xs text-gray-400">
+      <div className="flex items-center justify-center gap-6 mt-3 text-[11px]" style={{ color: 'var(--muted)' }}>
         <span className="flex items-center gap-2">
-          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: RISK_COLOR }} />
+          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: riskColour }} />
           Pushed towards fraud
         </span>
         <span className="flex items-center gap-2">
-          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: SAFE_COLOR }} />
+          <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: safeColour }} />
           Pushed towards legitimate
         </span>
       </div>

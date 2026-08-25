@@ -4,7 +4,36 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>finguard-dashboard</title>
+    <meta name="description" content="Merchant payment risk — detect, decide, defend." />
+    <title>FinGuard — Merchant Risk Console</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <script>
+      // Resolve the theme before first paint.
+      //
+      // Applied here rather than in React because the bundle loads after the browser
+      // has already painted the background: a dark-mode viewer would get a white flash
+      // on every load, which is the detail that makes a dark theme feel bolted on.
+      // Wrapped in try/catch because localStorage throws outright in some privacy modes.
+      (function () {
+        try {
+          var stored = localStorage.getItem('finguard-theme');
+          if (stored === 'light' || stored === 'dark') {
+            document.documentElement.setAttribute('data-theme', stored);
+          }
+          // 'system' and a missing value both leave the attribute off, which is what
+          // the prefers-color-scheme rules in index.css key on.
+        } catch (e) {
+          /* no stored preference available — the media query still applies */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

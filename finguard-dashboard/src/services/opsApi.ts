@@ -1,5 +1,7 @@
 import type {
   DecisionRecord,
+  RingDetail,
+  RingSummary,
   DisputeRecord,
   DisputeOutcome,
   OperatingStats,
@@ -170,4 +172,35 @@ export function setModelDisabled(disable: boolean, signal?: AbortSignal): Promis
     OPS_TIMEOUT_MS,
     signal,
   );
+}
+
+/**
+ * Labelled scam incidents, largest fan-in first.
+ *
+ * Served from the Module 1 dataset rather than the ledger: a fresh deployment has
+ * scored nothing, and an investigation view with no incidents in it demonstrates
+ * nothing. In production the same view is built from the graph store over live
+ * traffic - the same star, discovered rather than labelled.
+ */
+export async function fetchRings(
+  limit = 30,
+  signal?: AbortSignal,
+): Promise<RingSummary[]> {
+  const body = await request<{ rings: RingSummary[] }>(
+    `/api/v1/rings?limit=${limit}`,
+    {},
+    OPS_TIMEOUT_MS,
+    signal,
+  );
+  return body.rings ?? [];
+}
+
+/** One incident with every transfer and its offset from the first. */
+export function fetchRing(ringId: string, signal?: AbortSignal): Promise<RingDetail> {
+  return request<RingDetail>(`/api/v1/rings/${ringId}`, {}, OPS_TIMEOUT_MS, signal);
+}
+
+/** The model's own record - metrics, ablations, splits, economics, environment. */
+export function fetchModelCard(signal?: AbortSignal): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>('/api/v1/model-card', {}, OPS_TIMEOUT_MS, signal);
 }

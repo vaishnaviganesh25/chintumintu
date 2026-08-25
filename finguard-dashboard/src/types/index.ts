@@ -201,3 +201,38 @@ export interface DeepHealth {
   dependencies: Record<string, { status: string; [key: string]: unknown }>;
   chaos_endpoint_enabled: boolean;
 }
+
+/** One labelled scam incident, as the investigation index lists it. */
+export interface RingSummary {
+  ring_id: string;
+  pattern: string;
+  transfers: number;
+  /** Distinct payers into the collecting account — the star's arity. */
+  fanin: number;
+  receiver: string;
+  total_amount: number;
+  receiver_age_days: number;
+  window_seconds: number;
+  started_at: string;
+}
+
+export interface RingEdge {
+  sender: string;
+  receiver: string;
+  amount: number;
+  timestamp: string;
+  /** Seconds after the first transfer, so the view can replay in order. */
+  offset_seconds: number;
+}
+
+export interface RingDetail {
+  ring_id: string;
+  pattern: string;
+  receivers: string[];
+  senders: string[];
+  fanin: number;
+  total_amount: number;
+  window_seconds: number;
+  receiver_age_days: number;
+  edges: RingEdge[];
+}

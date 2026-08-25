@@ -16,15 +16,17 @@ interface RiskGaugeProps {
  * 30%, so a dial with fixed red/amber/green bands would routinely contradict the
  * badge sitting directly above it.
  */
-const DIAL: Record<MerchantAction, { text: string; stroke: string }> = {
-  ACCEPT: { text: 'text-green-500', stroke: '#22c55e' },
-  STEP_UP: { text: 'text-amber-400', stroke: '#f59e0b' },
-  HOLD: { text: 'text-red-500', stroke: '#ef4444' },
+// Both halves come from the same token, so the number and the arc can never
+// disagree about what the decision was.
+const DIAL: Record<MerchantAction, string> = {
+  ACCEPT: 'var(--accept)',
+  STEP_UP: 'var(--challenge)',
+  HOLD: 'var(--hold)',
 };
 
 export function RiskGauge({ probability, action, threshold }: RiskGaugeProps) {
   const percentage = Math.round(probability * 100);
-  const { text: textColor, stroke: strokeColor } = DIAL[action] ?? DIAL.HOLD;
+  const tone = DIAL[action] ?? DIAL.HOLD;
 
   const circumference = 2 * Math.PI * 45; // radius = 45
   const strokeDashoffset = circumference - probability * circumference;
@@ -40,13 +42,13 @@ export function RiskGauge({ probability, action, threshold }: RiskGaugeProps) {
             stroke="currentColor"
             strokeWidth="8"
             fill="transparent"
-            className="text-gray-600"
+            style={{ color: 'var(--rule)' }}
           />
           <motion.circle
             cx="50"
             cy="50"
             r="45"
-            stroke={strokeColor}
+            stroke={tone}
             strokeWidth="8"
             fill="transparent"
             strokeDasharray={circumference}
@@ -59,7 +61,8 @@ export function RiskGauge({ probability, action, threshold }: RiskGaugeProps) {
 
         <div className="absolute inset-0 flex items-center justify-center">
           <motion.span
-            className={`text-2xl font-bold ${textColor}`}
+            className="text-2xl font-semibold fg-mono"
+            style={{ color: tone }}
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ delay: 0.5, duration: 0.5 }}
@@ -69,9 +72,9 @@ export function RiskGauge({ probability, action, threshold }: RiskGaugeProps) {
         </div>
       </div>
 
-      <p className="text-sm text-gray-400 mt-2">Fraud Risk</p>
+      <p className="fg-label mt-2">Fraud risk</p>
       {typeof threshold === 'number' && (
-        <p className="text-xs text-gray-500 mt-0.5">
+        <p className="fg-mono text-[11px] mt-0.5" style={{ color: 'var(--faint)' }}>
           blocks at {(threshold * 100).toFixed(1)}%
         </p>
       )}
