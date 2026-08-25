@@ -51,6 +51,27 @@ LONG_WINDOW_S = 3_600
 # generator - noted because it is the kind of constant that silently overfits.
 HUB_FANIN = 3
 
+# Time constants for the decayed counterparts of the windowed features above.
+#
+# A window has a boundary, and a boundary is a seam an adversary can pace under: six
+# payers arriving 601 seconds apart into one account leave `receiver_fanin_10m` reading
+# 1 forever, and the hub flag never fires. Measured, not hypothesised - see
+# `tests/test_graph_features.py::test_a_paced_ring_walks_straight_through_the_window`.
+#
+# An exponential decay has no boundary. Evidence fades smoothly instead of falling off
+# a cliff, so there is no interval to find and sit just outside of. The attacker's
+# lever becomes "go slower", which costs them time linearly rather than buying them
+# invisibility at one specific gap.
+#
+# It is no more expensive to maintain than a counter: state decays multiplicatively
+# between events and increments on arrival, one update per transaction either way.
+DECAY_FAST_S = 600.0
+DECAY_SLOW_S = 3_600.0
+
+# Below this a payer's contribution is not worth carrying. Bounds the per-receiver
+# state so a busy merchant does not accumulate an unbounded dictionary.
+DECAY_FLOOR = 1e-3
+
 GRAPH_FEATURES = [
     "receiver_fanin_10m",
     "receiver_fanin_1h",
@@ -58,6 +79,9 @@ GRAPH_FEATURES = [
     "receiver_amount_10m",
     "receiver_is_hub",
     "sender_fanout_1h",
+    "receiver_payers_decay_fast",
+    "receiver_payers_decay_slow",
+    "receiver_inflow_decay",
 ]
 
 
@@ -132,6 +156,79 @@ def _rolling_distinct_and_counts(
     return distinct, counts, totals
 
 
+def _rolling_decayed(
+    group_keys: np.ndarray,
+    timestamps: np.ndarray,
+    partners: np.ndarray,
+    tau_fast: float,
+    tau_slow: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Decayed partner diversity and inflow intensity, with no window boundary.
+
+    For each account, every distinct partner contributes `exp(-age / tau)` based on how
+    long ago it was last seen. Three payers in five minutes sums to nearly three; the
+    same three spread over an hour sums to a fraction of one - and every value in
+    between exists, which is the point. There is no gap at which the measure resets.
+
+    Maintained incrementally. Each partner's last-seen time is stored, and its weight
+    is derived on read rather than recomputed over a history, so the cost per
+    transaction is one dictionary write and a bounded scan. Entries below `DECAY_FLOOR`
+    are pruned, which caps the state a busy account can accumulate.
+
+    Returns fast diversity, slow diversity, and a decayed count of arrivals.
+    """
+    n = len(group_keys)
+    fast = np.zeros(n, dtype=np.float64)
+    slow = np.zeros(n, dtype=np.float64)
+    inflow = np.zeros(n, dtype=np.float64)
+
+    if n == 0:
+        return fast, slow, inflow
+
+    order = np.lexsort((timestamps, group_keys))
+    g, t, p = group_keys[order], timestamps[order], partners[order]
+
+    starts = np.flatnonzero(np.r_[True, g[1:] != g[:-1]])
+    ends = np.r_[starts[1:], n]
+
+    for start, end in zip(starts, ends):
+        last_seen: dict[int, float] = {}
+        intensity = 0.0
+        previous_t = t[start]
+
+        for head in range(start, end):
+            now = t[head]
+            # Decay the running intensity forward to this instant, then count the
+            # arrival. This is the O(1) half - no history is re-read.
+            intensity *= np.exp(-(now - previous_t) / tau_fast)
+            intensity += 1.0
+            previous_t = now
+
+            last_seen[p[head]] = float(now)
+
+            weight_fast = 0.0
+            weight_slow = 0.0
+            stale = []
+            for partner, seen_at in last_seen.items():
+                age = now - seen_at
+                wf = np.exp(-age / tau_fast)
+                ws = np.exp(-age / tau_slow)
+                if ws < DECAY_FLOOR:
+                    stale.append(partner)
+                    continue
+                weight_fast += wf
+                weight_slow += ws
+            for partner in stale:
+                del last_seen[partner]
+
+            idx = order[head]
+            fast[idx] = weight_fast
+            slow[idx] = weight_slow
+            inflow[idx] = intensity
+
+    return fast, slow, inflow
+
+
 def _codes(series: pd.Series) -> np.ndarray:
     """Stable integer codes for a string column - dict lookups on ints beat strings."""
     return pd.factorize(series.astype("string").fillna(""), sort=False)[0].astype(np.int64)
@@ -181,6 +278,17 @@ def compute_graph_features(df: pd.DataFrame) -> pd.DataFrame:
     out["receiver_amount_10m"] = amount_short
     out["receiver_is_hub"] = (fanin_short >= HUB_FANIN).astype(int)
     out["sender_fanout_1h"] = fanout_long
+
+    # The same questions without a boundary to pace under. Kept alongside the windowed
+    # features rather than replacing them: a window is the sharper signal when the
+    # burst really is inside it, and the decay is what remains when the burst has been
+    # deliberately stretched to sit outside.
+    payers_fast, payers_slow, inflow = _rolling_decayed(
+        receivers, timestamps, senders, DECAY_FAST_S, DECAY_SLOW_S
+    )
+    out["receiver_payers_decay_fast"] = payers_fast
+    out["receiver_payers_decay_slow"] = payers_slow
+    out["receiver_inflow_decay"] = inflow
 
     return out
 

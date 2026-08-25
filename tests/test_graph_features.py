@@ -19,6 +19,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from graph_features import (
+    DECAY_SLOW_S,
     GRAPH_FEATURES,
     HUB_FANIN,
     LONG_WINDOW_S,
@@ -348,3 +349,129 @@ def test_ring_edges_carry_their_offset_so_the_view_can_animate_in_order():
 def test_an_unknown_ring_raises_rather_than_returning_an_empty_star():
     with pytest.raises(KeyError):
         describe_ring(_ring_frame(), "ring_does_not_exist")
+
+
+# --------------------------------------------------------------------------- #
+# The window's seam, and the decay that closes it
+# --------------------------------------------------------------------------- #
+def _paced_ring(gap_s: int, payers: int = 6) -> pd.DataFrame:
+    """One account collecting from several payers, deliberately spaced."""
+    return frame([txn(f"victim{i}@ybl", "mule@paytm", i * gap_s) for i in range(payers)])
+
+
+def test_a_paced_ring_walks_straight_through_the_window():
+    """The vulnerability the decayed features exist to close.
+
+    A window is a boundary, and a boundary is a public seam: an adversary who spaces
+    transfers just past it resets the counter every time. Six payers arriving 601
+    seconds apart into one account leave the fan-in reading 1 - forever - and the hub
+    flag never fires. The pacing is learnable from decline responses, so this is not a
+    theoretical gap.
+
+    Asserted rather than fixed, because the windowed features are kept: they are the
+    sharper signal when a burst really is inside the window, and this test documents
+    exactly where they stop working.
+    """
+    evaded = compute_graph_features(_paced_ring(SHORT_WINDOW_S + 1))
+
+    assert evaded["receiver_fanin_10m"].max() == 1
+    assert evaded["receiver_is_hub"].max() == 0
+
+
+def test_the_decayed_measure_has_no_gap_to_hide_in():
+    """Same six payers, same pacing, and the decayed diversity still sees them.
+
+    This is the property a window cannot have. Evidence fades smoothly instead of
+    falling off a cliff, so there is no interval to sit just outside of.
+    """
+    evaded = compute_graph_features(_paced_ring(SHORT_WINDOW_S + 1))
+
+    assert evaded["receiver_fanin_10m"].max() == 1          # the window is blind
+    assert evaded["receiver_payers_decay_slow"].max() > 3.0  # the decay is not
+
+
+@settings(max_examples=40, deadline=None)
+@given(gap=st.integers(min_value=30, max_value=7_200))
+def test_decayed_diversity_degrades_smoothly_at_every_pacing(gap):
+    """No pacing produces a cliff.
+
+    The strongest statement available: whatever gap an adversary picks, the measure
+    stays above the floor a single payer would produce. Their lever becomes "go
+    slower", which costs time linearly rather than buying invisibility at one value.
+    """
+    paced = compute_graph_features(_paced_ring(gap))
+
+    assert paced["receiver_payers_decay_slow"].max() > 1.0
+
+
+def test_slower_pacing_is_monotonically_less_alarming():
+    """Spacing a ring out must reduce the signal - just never to nothing.
+
+    A measure that did not fall with pacing would flag ordinary repeat custom; one
+    that fell to zero would have a seam. Monotone decline is the shape that is right.
+    """
+    peaks = [
+        float(compute_graph_features(_paced_ring(gap))["receiver_payers_decay_slow"].max())
+        for gap in (120, 600, 1_200, 2_400, 4_800)
+    ]
+
+    assert peaks == sorted(peaks, reverse=True)
+    assert peaks[0] > peaks[-1]
+
+
+def test_one_payer_paying_often_does_not_look_like_a_ring_under_decay():
+    """Diversity, not volume. The decayed measure must keep the same distinction the
+    windowed one makes, or it trades a seam for a false-positive source."""
+    repeat = compute_graph_features(
+        frame([txn("regular@ybl", "shop@paytm", i * 60) for i in range(10)])
+    )
+    ring = compute_graph_features(_paced_ring(60, payers=10))
+
+    # One payer contributes at most 1, however many times they pay.
+    assert repeat["receiver_payers_decay_slow"].max() <= 1.01
+    assert ring["receiver_payers_decay_slow"].max() > 5.0
+
+
+def test_inflow_intensity_is_carried_state_not_a_window():
+    """The decayed arrival count, kept because it is the O(1) half of the measure.
+
+    It decays multiplicatively between events and increments on arrival - one update
+    per transaction, the same cost as maintaining a counter, with no boundary.
+    """
+    quiet = compute_graph_features(
+        frame([txn("a@ybl", "shop@paytm", 0), txn("b@ybl", "shop@paytm", 10_000)])
+    )
+    busy = compute_graph_features(
+        frame([txn(f"p{i}@ybl", "shop@paytm", i * 30) for i in range(8)])
+    )
+
+    # A payment after a long silence carries almost nothing forward.
+    assert quiet["receiver_inflow_decay"].iloc[1] == pytest.approx(1.0, abs=0.05)
+    assert busy["receiver_inflow_decay"].max() > 4.0
+
+
+def test_the_decayed_features_stay_backward_looking():
+    """The same guarantee as the windowed ones - truncation must not change history."""
+    rows = [txn(f"victim{i}@ybl", "mule@paytm", i * 400) for i in range(6)]
+
+    full = compute_graph_features(frame(rows))
+    prefix = compute_graph_features(frame(rows[:3]))
+
+    pd.testing.assert_frame_equal(full.iloc[:3], prefix)
+
+
+def test_a_lone_payment_starts_the_decay_at_one():
+    """Cold start: the account's first payment contributes itself and nothing more."""
+    alone = compute_graph_features(frame([txn("a@ybl", "shop@paytm", 0)]))
+
+    assert alone["receiver_payers_decay_fast"].iloc[0] == pytest.approx(1.0)
+    assert alone["receiver_payers_decay_slow"].iloc[0] == pytest.approx(1.0)
+    assert alone["receiver_inflow_decay"].iloc[0] == pytest.approx(1.0)
+
+
+def test_the_slow_constant_outlasts_the_fast_one():
+    """Two time constants so a burst and a sustained campaign stay distinguishable."""
+    stretched = compute_graph_features(_paced_ring(DECAY_SLOW_S // 4))
+    row = stretched.iloc[-1]
+
+    assert row["receiver_payers_decay_slow"] > row["receiver_payers_decay_fast"]

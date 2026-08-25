@@ -116,6 +116,12 @@ FEATURE_CONCEPTS: dict[str, str] = {
     "receiver_txn_count_10m": "how fast this account is collecting",
     "receiver_amount_10m": "how much this account has just collected",
     "sender_fanout_1h": "how many accounts this payer is sending to",
+    # The decayed counterparts answer the same question as the windowed fan-in, so
+    # they share its concept. Keeping them separate would split the credit between two
+    # encodings of one fact, which is the thing this whole mapping exists to prevent.
+    "receiver_payers_decay_fast": "how many different people have just paid this account",
+    "receiver_payers_decay_slow": "how many different people have just paid this account",
+    "receiver_inflow_decay": "how fast this account is collecting",
 }
 
 # Longest first so `prev_amount_ratio` never gets matched by `prev_amount`.
