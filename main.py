@@ -32,6 +32,13 @@ before they leave the process, which is why the dashboard receives "age of the
 receiving UPI ID" once rather than four correlated columns splitting credit between
 them.
 
+**History is kept on both sides of the payment, and it has to be.** The lag features
+need the sender's previous transaction; the graph features need everyone who has paid
+the *receiver* recently. A mule collecting from three victims in ten minutes is only
+visible from the receiving side, so a store keyed solely by sender would compute a
+fan-in of one for every payment and the model would score production traffic against a
+feature space it was never fitted on.
+
 **The decision is merchant-side and has three outcomes, not two.** The model returns a
 probability; `merchant_policy` turns it into ACCEPT, STEP_UP or HOLD by comparing the
 expected rupee cost of each action under the merchant's own economics. A gateway can
@@ -63,6 +70,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from audit_store import VALID_OUTCOMES, store as audit
 from chargeback_agent import available_provider, respond_to_dispute
 from degradation import Rung, fallback_verdict
+from graph_features import describe_ring
+from razorpay_client import client as razorpay
 from merchant_policy import DEFAULT as MERCHANT, merchant_advice
 from explain_model import (
     build_explainer,
@@ -316,42 +325,79 @@ class HealthResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 # Per-sender history
 # --------------------------------------------------------------------------- #
-class SenderHistory:
-    """Recent transactions per sender, so the lag features have something to look at.
+class TransactionHistory:
+    """Recent transactions indexed by both payer and payee.
 
-    Deliberately small and in-process. Swapping this for Redis is the one change
-    needed to run more than one worker; the interface is two methods wide to keep
-    that swap cheap.
+    Two indexes over the same rows, because the two feature families ask opposite
+    questions. The lag features want "what did *this sender* do last", which the ₹1
+    test depends on. The graph features want "who else has paid *this receiver*
+    recently", which is the only way a mule ring is visible at all - from the
+    collecting side, counting distinct victims.
+
+    Indexing one side only is not a partial answer, it is a wrong one: fan-in would be
+    1 on every live payment while training saw the true value, and the model would be
+    scoring against a feature space it was never fitted on. Nothing would raise.
+
+    Deliberately small and in-process. Swapping this for Redis is the one change needed
+    to run more than one worker; the interface is three methods wide to keep that
+    swap cheap.
     """
 
     def __init__(self, depth: int = HISTORY_DEPTH, ttl: timedelta = HISTORY_TTL,
-                 max_senders: int = HISTORY_MAX_SENDERS) -> None:
-        self._store: dict[str, deque[dict[str, Any]]] = {}
+                 max_keys: int = HISTORY_MAX_SENDERS) -> None:
+        self._by_sender: dict[str, deque[dict[str, Any]]] = {}
+        self._by_receiver: dict[str, deque[dict[str, Any]]] = {}
         self._depth = depth
         self._ttl = ttl
-        self._max_senders = max_senders
+        self._max_keys = max_keys
         self._lock = threading.Lock()
+
+    def _window(self, entries: list[dict[str, Any]], before: datetime) -> list[dict[str, Any]]:
+        cutoff = before - self._ttl
+        return [e for e in entries if cutoff <= e["timestamp"] <= before]
 
     def recent(self, sender_vpa: str, before: datetime) -> list[dict[str, Any]]:
         """Prior transactions for this sender, oldest first, within the TTL."""
         with self._lock:
-            entries = list(self._store.get(sender_vpa, ()))
-        cutoff = before - self._ttl
-        return [e for e in entries if cutoff <= e["timestamp"] <= before]
+            entries = list(self._by_sender.get(sender_vpa, ()))
+        return self._window(entries, before)
+
+    def recent_for_receiver(self, receiver_vpa: str, before: datetime) -> list[dict[str, Any]]:
+        """Prior transactions *into* this receiver - the fan-in the graph features count."""
+        with self._lock:
+            entries = list(self._by_receiver.get(receiver_vpa, ()))
+        return self._window(entries, before)
+
+    def context(self, sender_vpa: str, receiver_vpa: str,
+                before: datetime) -> list[dict[str, Any]]:
+        """Both sides, merged, de-duplicated and in chronological order.
+
+        A payment can appear in both indexes - the sender's own earlier payment to the
+        same receiver, which is exactly the ₹1 test - so rows are keyed on identity
+        before merging. Sorting is stable, so rows sharing a timestamp keep the order
+        they were recorded in.
+        """
+        merged: dict[tuple, dict[str, Any]] = {}
+        for row in self.recent(sender_vpa, before) + self.recent_for_receiver(receiver_vpa, before):
+            merged[(row["sender_vpa"], row["receiver_vpa"], row["timestamp"], row["amount"])] = row
+        return sorted(merged.values(), key=lambda r: r["timestamp"])
 
     def record(self, row: dict[str, Any]) -> None:
         with self._lock:
-            bucket = self._store.setdefault(row["sender_vpa"], deque(maxlen=self._depth))
-            bucket.append(row)
-            # Crude bound on unbounded growth: a real deployment gets eviction from
-            # Redis, not from a dict comprehension.
-            if len(self._store) > self._max_senders:
-                for key in list(self._store)[: len(self._store) - self._max_senders]:
-                    self._store.pop(key, None)
+            for index, key in (
+                (self._by_sender, row["sender_vpa"]),
+                (self._by_receiver, row["receiver_vpa"]),
+            ):
+                index.setdefault(key, deque(maxlen=self._depth)).append(row)
+                # Crude bound on unbounded growth: a real deployment gets eviction from
+                # Redis, not from a dict comprehension.
+                if len(index) > self._max_keys:
+                    for stale in list(index)[: len(index) - self._max_keys]:
+                        index.pop(stale, None)
 
     def __len__(self) -> int:
         with self._lock:
-            return len(self._store)
+            return len(self._by_sender)
 
 
 # --------------------------------------------------------------------------- #
@@ -373,7 +419,7 @@ class FraudEngine:
         self.explainer = None
         self.names: list[str] = []
         self.threshold: float = 0.5
-        self.history = SenderHistory()
+        self.history = TransactionHistory()
         self._lock = threading.Lock()
         # Set by the chaos endpoint to exercise the ladder in a demo. Never set by a
         # failure - a real failure is caught where it happens.
@@ -430,9 +476,13 @@ class FraudEngine:
     def _to_frame(req: TransactionRequest, history: list[dict[str, Any]]) -> pd.DataFrame:
         """Build the raw frame `engineer_features` expects: history first, then this row.
 
-        Order matters. `engineer_features` derives the lag features with a
+        Order matters twice over. The lag features come from a
         `groupby(sender_vpa).shift(1)`, so the sender's previous transaction has to
-        physically precede this one in the frame.
+        physically precede this one; the graph features sweep a time window, so every
+        contributing row has to be present and chronological. `history` is therefore
+        both sides merged - the sender's recent payments *and* everyone else who has
+        paid this receiver - which is what makes a live fan-in match the one computed
+        during training.
         """
         ts = req.timestamp or datetime.now()
         rows = [
@@ -452,7 +502,11 @@ class FraudEngine:
 
         gap = req.time_since_last_txn_sec
         if gap is None:
-            gap = (ts - history[-1]["timestamp"]).total_seconds() if history else -1.0
+            # The sender's own last payment, not the last row in the merged frame -
+            # that could belong to a different payer who happened to pay the same
+            # receiver more recently, and the gap would then describe someone else.
+            own = [h for h in history if h["sender_vpa"] == req.sender_vpa]
+            gap = (ts - own[-1]["timestamp"]).total_seconds() if own else -1.0
 
         rows.append({
             "timestamp": pd.Timestamp(ts),
@@ -533,7 +587,7 @@ class FraudEngine:
         start = time.perf_counter()
         ts = req.timestamp or datetime.now()
 
-        history = self.history.recent(req.sender_vpa, before=ts)
+        history = self.history.context(req.sender_vpa, req.receiver_vpa, before=ts)
         raw_frame = self._to_frame(req, history)
         current = raw_frame.index[-1]
 
@@ -619,6 +673,84 @@ class FraudEngine:
         )
 
 
+class RingCatalogue:
+    """Labelled scam incidents, for the investigation view.
+
+    Read from the Module 1 dataset rather than from the ledger, and that distinction
+    matters. The ledger holds what this deployment has scored, which on a fresh start
+    is nothing; the dataset holds incidents with a known `ring_id`, so a ring can be
+    opened and examined without first having to reproduce a fraud burst by hand.
+
+    In production the equivalent view is built from the graph store over live traffic -
+    the same star, discovered rather than labelled. The features that find it
+    (`receiver_fanin_10m` and friends) are already computed on every scored payment;
+    what is missing is a window store to query them from, not the detection.
+
+    Loaded on first request, not at startup: 13 MB of CSV is not worth reading in a
+    process that may never be asked for a ring.
+    """
+
+    def __init__(self) -> None:
+        self._df: Any = None
+        self._lock = threading.Lock()
+
+    def _load(self):
+        if self._df is None:
+            path = BASE_DIR / "upi_synthetic_data.csv"
+            if not path.exists():
+                raise FileNotFoundError(
+                    f"{path.name} not found. Run `python generate_upi_dataset.py` first."
+                )
+            frame = pd.read_csv(path, parse_dates=["timestamp"])
+            self._df = frame[frame["ring_id"].notna() & (frame["ring_id"] != "")]
+        return self._df
+
+    def summaries(self, limit: int = 40) -> list[dict[str, Any]]:
+        """One row per incident, largest fan-in first - the interesting ones on top."""
+        with self._lock:
+            df = self._load()
+
+        grouped = (
+            df.groupby("ring_id")
+            .agg(
+                pattern=("fraud_pattern", "first"),
+                transfers=("amount", "size"),
+                senders=("sender_vpa", "nunique"),
+                receiver=("receiver_vpa", "first"),
+                total_amount=("amount", "sum"),
+                receiver_age_days=("receiver_vpa_age_days", "first"),
+                started_at=("timestamp", "min"),
+                ended_at=("timestamp", "max"),
+            )
+            .reset_index()
+        )
+        grouped["window_seconds"] = (
+            (grouped["ended_at"] - grouped["started_at"]).dt.total_seconds().astype(int)
+        )
+        grouped = grouped.sort_values(["senders", "total_amount"], ascending=False).head(limit)
+
+        return [
+            {
+                "ring_id": str(r["ring_id"]),
+                "pattern": str(r["pattern"]),
+                "transfers": int(r["transfers"]),
+                "fanin": int(r["senders"]),
+                "receiver": str(r["receiver"]),
+                "total_amount": float(r["total_amount"]),
+                "receiver_age_days": int(r["receiver_age_days"]),
+                "window_seconds": int(r["window_seconds"]),
+                "started_at": str(r["started_at"]),
+            }
+            for _, r in grouped.iterrows()
+        ]
+
+    def detail(self, ring_id: str) -> dict[str, Any]:
+        with self._lock:
+            df = self._load()
+        return describe_ring(df, ring_id)
+
+
+rings = RingCatalogue()
 engine = FraudEngine()
 
 
@@ -851,6 +983,50 @@ def stats() -> dict[str, Any]:
     return audit.stats()
 
 
+@app.get("/api/v1/rings", summary="Labelled scam incidents, largest fan-in first")
+def list_rings(limit: int = 40) -> dict[str, Any]:
+    """The investigation index.
+
+    A mule ring is a star - several victims paying one account inside minutes - and it
+    is the one fraud shape a row-at-a-time model can only ever infer sideways. These
+    are the incidents with a known `ring_id`, so the structure can be examined directly.
+    """
+    try:
+        return {"rings": rings.summaries(limit=limit)}
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail=str(exc)) from None
+
+
+@app.get("/api/v1/rings/{ring_id}", summary="One incident as a graph")
+def get_ring(ring_id: str) -> dict[str, Any]:
+    """Every transfer in the incident, with its offset from the first.
+
+    The offsets are what let the view replay the ring in order rather than drawing it
+    all at once - which is the difference between a diagram and watching the thing
+    assemble.
+    """
+    try:
+        return rings.detail(ring_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail=str(exc)) from None
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"No incident {ring_id!r}.") from None
+
+
+@app.get("/api/v1/model-card", summary="What shipped, and what it cost")
+def model_card() -> dict[str, Any]:
+    """The model's own record: metrics, ablations, splits, economics, environment.
+
+    Served straight from `model_config.json` rather than re-derived, so the dashboard
+    cannot drift from what the training run actually produced.
+    """
+    require_engine()
+    return engine.config
+
+
 @app.get("/api/v1/health/deep", summary="Per-dependency status and the active rung")
 def health_deep() -> dict[str, Any]:
     """Every dependency, and which rung the engine would answer on right now.
@@ -879,6 +1055,7 @@ def health_deep() -> dict[str, Any]:
             "rule_engine": {"status": "ok", "note": "always available - pure function, no artifacts"},
             "audit_ledger": {"status": ledger_state, "decisions_recorded": recorded,
                              "last_error": audit.last_error},
+            "razorpay": razorpay.health(),
             "llm_provider": {
                 "status": "configured" if provider else "absent",
                 "provider": provider[0] if provider else None,
