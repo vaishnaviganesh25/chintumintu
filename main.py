@@ -71,6 +71,7 @@ from audit_store import VALID_OUTCOMES, store as audit
 from chargeback_agent import available_provider, respond_to_dispute
 from degradation import Rung, fallback_verdict
 from graph_features import describe_ring
+import network_signals
 from razorpay_client import client as razorpay
 from merchant_policy import DEFAULT as MERCHANT, merchant_advice
 from explain_model import (
@@ -271,6 +272,17 @@ class AnalysisResponse(BaseModel):
     degraded: bool = Field(
         False,
         description="True when this verdict came from a fallback rather than the model.",
+    )
+    network_reasons: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Why cross-merchant reputation changed the action, if it did. Empty when "
+            "the consortium view had nothing to add - which is the normal case."
+        ),
+    )
+    network_reputation: dict[str, int] = Field(
+        default_factory=dict,
+        description="What the gateway knows about this payer and payee across merchants.",
     )
     decision_id: str | None = Field(
         None,
@@ -615,6 +627,14 @@ class FraudEngine:
         probability = result["probability"]
         action = MERCHANT.decide(probability, float(req.amount))
         costs = MERCHANT.action_costs(probability, float(req.amount))
+
+        # Cross-merchant reputation, applied after the model rather than inside it.
+        # A payer confirmed fraudulent at an unrelated merchant this week is, to this
+        # merchant, a new customer with a clean record - only the gateway between them
+        # knows otherwise. It adjusts the action and says why; it never touches the
+        # score, because reputation cannot be trained on without leaking the label.
+        reputation = network_signals.lookup(audit, req.sender_vpa, req.receiver_vpa, now=ts)
+        action, network_reasons = network_signals.apply(action, reputation)
         blocked = action != "ACCEPT"
         concepts = result["concepts"]
         # `concepts` arrives sorted by absolute contribution, so the dashboard's
@@ -654,7 +674,7 @@ class FraudEngine:
                 model_trained_at=self.config.get("created_at"),
                 threshold_policy=self.config.get("threshold_policy", {}).get("active_policy"),
                 latency_ms=elapsed_ms,
-                reasons=list(result["reasons"]),
+                reasons=list(result["reasons"]) + network_reasons,
                 shap_concepts={str(k): float(v) for k, v in concepts.items()},
             )
 
@@ -667,7 +687,11 @@ class FraudEngine:
             rung=Rung.FULL.label,
             degraded=False,
             execution_time_ms=elapsed_ms,
-            xai_explanation=merchant_advice(action, float(req.amount), result["reasons"]),
+            xai_explanation=merchant_advice(
+                action, float(req.amount), result["reasons"] + network_reasons
+            ),
+            network_reasons=network_reasons,
+            network_reputation=reputation.as_dict() if reputation.has_history else {},
             shap_features=shap_features,
             decision_id=decision_id,
         )

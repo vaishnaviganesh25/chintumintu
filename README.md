@@ -6,12 +6,12 @@ answerable months later — and the engine keeps scoring when its own model is g
 
 | | |
 | --- | --- |
-| **Detection** | PR-AUC 0.9958 on a test split grouped so no scam incident straddles the boundary |
-| **What it saves** | ₹115,029 of merchant loss per 20,000 payments, against ₹280,242 for a single block/allow threshold |
-| **Graph layer** | Fan-in over a trailing window recovers 53% of the ground lost by dropping account age — a signal a ring cannot age its way out of |
-| **Honesty** | Grouping the split cost real performance, 0.9955 → 0.9958, because the earlier figure was partly a property of the split. Every ablation is in the report |
+| **Detection** | PR-AUC 0.9979 on a test split grouped so no scam incident straddles the boundary |
+| **What it saves** | ₹99,548 of merchant loss per 20,000 payments, against ₹185,410 for a single block/allow threshold |
+| **Graph layer** | Fan-in and decayed collection velocity recover 60% of the ground lost by dropping account age — a signal a ring cannot age its way out of |
+| **Honesty** | Grouping the split cost real performance, 0.9955 → 0.9979, because the earlier figure was partly a property of the split. Every ablation is in the report |
 | **Resilience** | Four-rung degradation ladder; kill the model and it still scores, in 3 ms instead of 91 |
-| **Tests** | 245 Python + 43 TypeScript, including property-based |
+| **Tests** | 272 Python + 43 TypeScript, including property-based |
 
 ```bash
 docker compose up --build     # dashboard :5173, API docs :8080/docs
@@ -29,10 +29,11 @@ docker compose up --build     # dashboard :5173, API docs :8080/docs
 | 7. Degradation ladder | `degradation.py` | keeps scoring when the model cannot |
 | 8. Graph layer | `graph_features.py` | fan-in, fan-out, collection velocity |
 | 9. Razorpay disputes | `razorpay_client.py` | real dispute entities, optional live client |
+| 10. Network reputation | `network_signals.py` | cross-merchant evidence, applied as an overlay |
 | — merchant economics | `merchant_policy.py` | the cost model every decision is priced in |
 | — dashboard | `finguard-dashboard/` | React + Vite UI on port 5173 |
 | — serving check | `predict_example.py` | console demo of the scoring path |
-| — test suite | `tests/` | 245 tests, `pytest` |
+| — test suite | `tests/` | 272 tests, `pytest` |
 
 ```bash
 pip install -r requirements.txt
@@ -46,7 +47,7 @@ python main.py                    # serves the API on http://localhost:8080
 ```bash
 pip install -r requirements-dev.txt
 pytest                            # 180 tests
-pytest -m "not slow"              # 209 of them, no model artifacts needed
+pytest -m "not slow"              # 235 of them, no model artifacts needed
 ```
 
 > **Environment warning.** The numpy and pandas bounds in `requirements.txt` are
@@ -777,15 +778,15 @@ the structure, not the structure.
 
 | Feature set | PR-AUC | Recall | Precision |
 | --- | --- | --- | --- |
-| Everything | 0.9958 | 1.00 | 0.71 |
-| Without receiver VPA age | 0.9413 | 0.83 | 0.86 |
+| Everything | 0.9979 | 0.99 | 0.89 |
+| Without receiver VPA age | 0.9506 | 0.86 | 0.86 |
 | Without graph features | 0.9675 | 0.82 | 0.98 |
 | Without either | 0.8788 | 0.92 | 0.59 |
 
 Priced against the **age-ablated** model rather than the full one, because the full
 model is close to saturated and improving it proves nothing. With account age removed,
-adding fan-in and collection velocity moves PR-AUC 0.8788 → 0.9413
-— recovering 53% of the ground lost by dropping account age altogether.
+adding fan-in and collection velocity moves PR-AUC 0.8788 → 0.9506
+— recovering 60% of the ground lost by dropping account age altogether.
 
 *Read PR-AUC, not recall.* Each row is re-calibrated on its own out-of-fold
 probabilities, so the operating points are not the same point and the recall column is
@@ -895,6 +896,131 @@ dispute one paisa short of the payment it contests gets rejected.
 
 ---
 
+# Module 10 — Cross-merchant reputation, and what Vulcan changed here
+
+Razorpay announced **Vulcan** on 18 August 2026: a domain-specific transformer for
+payments, trained on ~3 trillion data points across 4 billion transactions, reading
+~3,000 signals per transaction. Four capabilities — hyper-precision routing,
+network-level fraud detection, RTO risk intelligence, predictive checkout
+personalisation. Reported: 8× more international card fraud stopped, **5× more
+fraudulent or disputed transactions identified**, 8–10% better payment success.
+
+Two things in that announcement changed this repository.
+
+## What it exposed: a payer nobody here could see
+
+Vulcan's second pillar is the one no individual merchant can do for itself —
+*"spots fraud visible only across merchants, flagging a stolen card the moment it's
+used across unrelated sellers."*
+
+Every other feature in FinGuard is computed from what one merchant can observe. A payer
+confirmed fraudulent at a phone reseller this morning is, to an unrelated grocery
+merchant this afternoon, a new customer with a clean record. Only the gateway between
+them knows otherwise — and a gateway is what this project models.
+
+`network_signals.py` reads that. It is a **runtime overlay, not a model feature**, and
+the distinction is the interesting part: reputation cannot be trained on. At fit time
+there are no decisions yet, so a "prior holds" column would be empty or — worse —
+back-filled from the labels the model is trying to predict. So the classifier never
+sees it. The model scores the payment on its merits; this layer adjusts the *action*
+and states its own reason. Two components, two records, both auditable.
+
+The demonstration is a payment the model genuinely cannot judge:
+
+```
+merchant A   STEP_UP   p=0.0225     analyst confirms fraud
+merchant B   ACCEPT    p=0.0000     ← clean payer, ₹2,400, ordinary grocery order
+merchant B   STEP_UP   p=0.0000     ← same payment, payer confirmed elsewhere
+                                      "this payer was confirmed fraudulent at another
+                                       merchant 1 time in the last 7 days"
+```
+
+The score is `0.0000` in both cases. The model is not wrong — the payment really does
+look ordinary. The consortium view is the only thing that separates them.
+
+Three restraints keep this from becoming a blacklist nobody approved:
+
+- **Only analyst-confirmed fraud escalates.** A prior HOLD is the model's opinion, and
+  letting opinions escalate each other means one borderline decision follows a customer
+  across every merchant they touch, compounding at each, with no human ever agreeing.
+- **One step at a time.** ACCEPT → STEP_UP → HOLD. A single signal never jumps a
+  payment to the most expensive action.
+- **Escalation only, never de-escalation.** A clean record is the default state of
+  every new customer, so treating it as positive evidence would score first-time
+  buyers as riskier than returning ones — wrong, and quietly discriminatory.
+
+## What it exposed second: a seam in this project's own features
+
+Razorpay disclosed that Vulcan's attention is **intra-transaction, field-to-field** — a
+set transformer reading every field against every other, permutation-invariant by
+construction. It does not attend over an account's payment history. Velocity therefore
+arrives *precomputed*, as entity fields inside that 3,000-signal vector.
+
+Which prompted a criticism worth taking seriously, from the public discussion around
+the launch: a precomputed velocity count is not the same kind of precomputed as a
+token. **A window has a boundary, and a boundary is a public seam.** Pace under the
+threshold and the counter resets — and the pacing is learnable from decline responses.
+The proposed falsifier was specific: *if the velocity set is already decayed rather
+than windowed, the seam is closed.*
+
+FinGuard's graph features were windowed counters. So the question was answerable
+directly, and the answer was not comfortable:
+
+| Payers arriving every | `receiver_fanin_10m` | `receiver_payers_decay_slow` |
+| --- | --- | --- |
+| 120 s | 6 | 5.53 |
+| 300 s | 3 | 4.92 |
+| **601 s** | **1** | **4.12** |
+| 900 s | 1 | 3.51 |
+| 1800 s | 1 | 2.41 |
+| 3600 s | 1 | 1.58 |
+
+Six victims paying one mule, spaced 601 seconds apart, left fan-in reading **1 —
+forever**. The hub flag never fired. A ring that paces itself one second past ten
+minutes was invisible.
+
+The fix is the one the criticism named. Exponentially-decayed counterparts, with two
+time constants, alongside the windowed features rather than replacing them: a window is
+the sharper signal when the burst really is inside it, and the decay is what remains
+when the burst has been deliberately stretched to sit outside. Evidence now fades
+smoothly instead of falling off a cliff, so there is no interval to sit just outside
+of. The attacker's lever becomes "go slower", which costs them time linearly rather
+than buying invisibility at one specific gap.
+
+It costs nothing extra to maintain — state decays multiplicatively between events and
+increments on arrival, one update per transaction, the same as a counter.
+`tests/test_graph_features.py` pins both halves: the window's blindness is asserted
+rather than quietly fixed, so the limit is documented, and a property test checks that
+*no* pacing produces a cliff in the decayed measure.
+
+## Where this project sits relative to Vulcan
+
+Not as a competitor — the comparison would be absurd, and claiming it would be worse.
+Vulcan is a foundation model over consortium-scale data; this is one engineer's
+merchant-side decision layer.
+
+The complementary reading is the honest one. Vulcan produces a **score**. What a
+merchant risk desk still needs around that score is what FinGuard is: a cost model that
+turns a probability into a priced action, an append-only ledger that makes the decision
+answerable months later, an explanation a human can act on, and a dispute response for
+the ones that get through.
+
+And there is one gap worth naming out loud, because the trade press named it first:
+Razorpay's architecture and training data are proprietary, there is no public technical
+whitepaper, and — as the coverage noted — merchants have no disclosed way to audit the
+model or independently verify the reported lift. Every number in this repository is
+reproducible from `python train_model.py`, every ablation is printed, and every
+decision replays from the ledger with the model version that made it. That is not a
+criticism of a production system with real constraints. It is the axis on which a small
+project can be genuinely better than a large one.
+
+*The intra-transaction attention detail comes from public discussion of the launch
+citing a Razorpay post, not from a technical paper — it is unverified here. The
+windowed-counter argument stands on its own regardless of whether Vulcan's velocity
+features are windowed or decayed, because FinGuard's demonstrably were.*
+
+---
+
 # The console
 
 Four views behind a persistent rail: **Simulator**, **Fraud desk**, **Ring graph**,
@@ -999,8 +1125,8 @@ leg 1 clear and leg 2 get held citing *gap since the sender's previous payment* 
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # 245 tests
-pytest -m "not slow"       # 209 of them; the rest need models/ on disk
+pytest                     # 272 tests
+pytest -m "not slow"       # 235 of them; the rest need models/ on disk
 cd finguard-dashboard && npm run test:run    # 43 tests
 ```
 
@@ -1015,6 +1141,7 @@ cd finguard-dashboard && npm run test:run    # 43 tests
 | `tests/test_degradation.py` | All four rungs, driven directly — including the two a healthy system never reaches |
 | `tests/test_graph_features.py` | Window edges, and that no window ever reads forward |
 | `tests/test_razorpay_client.py` | Entity shape, paise conversion, reason triage |
+| `tests/test_network_signals.py` | What the consortium layer must refuse to do |
 | `src/utils/scenarios.test.ts` | Every demo preset still produces the signature it claims |
 | `src/utils/validation.test.ts` | Client-side rules, kept in step with the API's validators |
 

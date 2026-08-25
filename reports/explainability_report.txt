@@ -2,8 +2,8 @@
 ==============================================================================
 FINGUARD MODULE 3 - EXPLAINABLE AI
 ==============================================================================
-Model     : RandomForest  (trained 2026-08-25T19:09:45+00:00)
-Threshold : 0.0693  [cost policy]
+Model     : RandomForest  (trained 2026-08-25T20:23:41+00:00)
+Threshold : 0.2682  [cost policy]
 
 Explaining a stratified sample of 3,400 transactions (400 fraud, 3,000 legitimate).
 Fraud is oversampled deliberately - at 0.5% prevalence a random sample would
@@ -16,20 +16,20 @@ GLOBAL DRIVERS (mean |SHAP| per concept)
 ==============================================================================
   Concept                                                  Mean |SHAP|   Direction
   -------------------------------------------------------------------------------------------
-  age of the receiving UPI ID                                   0.1736   higher -> safer
-  transaction amount                                            0.1368   higher -> riskier
-  how much this account has just collected                      0.0604   higher -> riskier
-  time of day                                                   0.0253   higher -> safer
-  gap since the sender's previous payment                       0.0225   higher -> safer
-  receiver looks like a registered merchant                     0.0205   higher -> safer
-  how fast this account is collecting                           0.0157   higher -> riskier
-  jump in size versus the previous payment                      0.0141   higher -> riskier
-  sent between 1 AM and 4 AM                                    0.0120   higher -> riskier
-  repeat payment to the same receiver                           0.0109   higher -> riskier
-  size of the sender's previous payment                         0.0103   higher -> safer
-  receiver's bank handle                                        0.0099   higher -> safer
-  shape of the receiver UPI ID                                  0.0031   higher -> riskier
-  how many different people have just paid this account         0.0030   higher -> riskier
+  age of the receiving UPI ID                                   0.1588   higher -> safer
+  transaction amount                                            0.1323   higher -> riskier
+  how much this account has just collected                      0.0664   higher -> riskier
+  how fast this account is collecting                           0.0302   higher -> riskier
+  time of day                                                   0.0231   higher -> safer
+  receiver looks like a registered merchant                     0.0199   higher -> safer
+  gap since the sender's previous payment                       0.0177   higher -> riskier
+  how many different people have just paid this account         0.0158   higher -> safer
+  jump in size versus the previous payment                      0.0140   higher -> riskier
+  sent between 1 AM and 4 AM                                    0.0118   higher -> riskier
+  size of the sender's previous payment                         0.0102   higher -> safer
+  receiver's bank handle                                        0.0092   higher -> safer
+  repeat payment to the same receiver                           0.0081   higher -> riskier
+  shape of the receiver UPI ID                                  0.0027   higher -> riskier
 
 ==============================================================================
 WHAT DRIVES EACH SCAM SIGNATURE
@@ -39,33 +39,33 @@ WHAT DRIVES EACH SCAM SIGNATURE
 
   legitimate  (n=3000)
       +0.0000  receiver UPI ID contains a scam keyword
-      -0.0002  sender UPI ID is a mobile number
-      -0.0002  how many accounts this payer is sending to
-      -0.0003  weekend transaction
+      -0.0001  sender UPI ID is a mobile number
+      -0.0002  sender's first recorded payment
+      -0.0002  weekend transaction
 
   new_vpa_velocity  (n=121)
-      +0.2356  age of the receiving UPI ID
-      +0.1189  transaction amount
-      +0.0480  how fast this account is collecting
-      +0.0352  how much this account has just collected
+      +0.2083  age of the receiving UPI ID
+      +0.1169  transaction amount
+      +0.0914  how fast this account is collecting
+      +0.0489  how much this account has just collected
 
   odd_hour_phishing  (n=124)
-      +0.1556  transaction amount
-      +0.1086  time of day
-      +0.0799  age of the receiving UPI ID
-      +0.0716  sent between 1 AM and 4 AM
+      +0.1542  transaction amount
+      +0.0975  time of day
+      +0.0699  age of the receiving UPI ID
+      +0.0688  sent between 1 AM and 4 AM
 
   rupee_1_test (large leg)  (n=82)
-      +0.1595  age of the receiving UPI ID
-      +0.1038  gap since the sender's previous payment
-      +0.0628  how fast this account is collecting
-      +0.0598  transaction amount
+      +0.1469  age of the receiving UPI ID
+      +0.1036  how fast this account is collecting
+      +0.0728  gap since the sender's previous payment
+      +0.0552  transaction amount
 
   rupee_1_test (probe leg)  (n=73)
-      +0.2655  age of the receiving UPI ID
-      +0.1053  transaction amount
-      +0.0526  how much this account has just collected
-      +0.0327  receiver looks like a registered merchant
+      +0.2529  age of the receiving UPI ID
+      +0.0927  transaction amount
+      +0.0565  how much this account has just collected
+      +0.0383  receiver looks like a registered merchant
 
 ==============================================================================
 CASE FILES - individual flagged transactions
@@ -74,23 +74,23 @@ CASE FILES - individual flagged transactions
   rupee_1_test (probe leg)
     9225530375@ybl  ->  kashvi.narula@okaxis
     Rs.1.00 at 17 Jul 2026, 13:03  | receiver VPA 1 days old
-    Fraud probability 0.9619  ->  BLOCK
+    Fraud probability 0.9718  ->  BLOCK
     Flagged because:
       + age of the receiving UPI ID (1 day old)
       + transaction amount (Rs.1)
       + how much this account has just collected (Rs.1 in 10 minutes)
     Argued against by:
-      - time of day (13:03)
       - size of the sender's previous payment (Rs.6,500)
+      - time of day (13:03)
 
   rupee_1_test (large leg)
     6557095040@okicici  ->  amrita.sunder@okicici
     Rs.13,500.00 at 01 Aug 2026, 06:31  | receiver VPA 0 days old
-    Fraud probability 0.9338  ->  BLOCK
+    Fraud probability 0.9441  ->  BLOCK
     Flagged because:
       + age of the receiving UPI ID (created today)
+      + how fast this account is collecting (2 payments in 10 minutes)
       + gap since the sender's previous payment (43 seconds after the previous one)
-      + repeat payment to the same receiver (yes)
     Argued against by:
       - transaction amount (Rs.13,500)
       - how much this account has just collected (Rs.13,501 in 10 minutes)
@@ -98,39 +98,39 @@ CASE FILES - individual flagged transactions
   new_vpa_velocity
     8032149394@oksbi  ->  watika.ramesh@paytm
     Rs.70,005.00 at 13 Jul 2026, 07:25  | receiver VPA 0 days old
-    Fraud probability 0.8544  ->  BLOCK
+    Fraud probability 0.9321  ->  BLOCK
     Flagged because:
       + age of the receiving UPI ID (created today)
-      + transaction amount (Rs.70,005)
       + how fast this account is collecting (3 payments in 10 minutes)
+      + transaction amount (Rs.70,005)
     Argued against by:
-      - sender's city (Mumbai)
       - time of day (07:25)
+      - sender's city (Mumbai)
 
   odd_hour_phishing
     8266605706@ibl  ->  girindra.bhat@ybl
     Rs.25,393.08 at 25 Jul 2026, 03:45  | receiver VPA 9 days old
-    Fraud probability 0.9047  ->  BLOCK
+    Fraud probability 0.9172  ->  BLOCK
     Flagged because:
       + transaction amount (Rs.25,393)
       + time of day (03:45)
       + sent between 1 AM and 4 AM (03:45)
     Argued against by:
       - sender's city (Muzaffarpur)
-      - size of the sender's previous payment (Rs.87)
+      - how fast this account is collecting (1 payment in 10 minutes)
 
 ==============================================================================
 FALSE POSITIVE REVIEW
 ==============================================================================
-  240 legitimate transaction(s) flagged across all 100,000 rows.
+  52 legitimate transaction(s) flagged across all 100,000 rows.
 
     akshay.walla34@oksbi  ->  bhavini.kara@okhdfcbank
     Rs.35,333.73 at 11 Jul 2026, 09:11  | receiver VPA 6 days old
-    Fraud probability 0.3853  (actually legitimate)
+    Fraud probability 0.3560  (actually legitimate)
     The model's stated reasoning:
       + transaction amount (Rs.35,334)
-      + size of the sender's previous payment (Rs.0)
       + how much this account has just collected (Rs.35,334 in 10 minutes)
+      + size of the sender's previous payment (Rs.0)
 
     Reading this as an analyst: the pattern genuinely does resemble a mule
     payment, and a human reviewing it would reach for the same evidence.
@@ -154,10 +154,10 @@ ARTIFACTS
 ==============================================================================
   reports/explanations/case_files.json                                 2.3 KB
   reports/explanations/global_shap_ranking.csv                         1.9 KB
-  reports/explanations/shap_beeswarm.png                             118.3 KB
-  reports/explanations/shap_importance_bar.png                       118.3 KB
-  reports/explanations/waterfall_false_positive.png                   80.1 KB
-  reports/explanations/waterfall_new_vpa_velocity.png                 80.8 KB
-  reports/explanations/waterfall_odd_hour_phishing.png                81.5 KB
-  reports/explanations/waterfall_rupee_1_test_large_leg.png           86.7 KB
-  reports/explanations/waterfall_rupee_1_test_probe_leg.png           81.2 KB
+  reports/explanations/shap_beeswarm.png                             121.7 KB
+  reports/explanations/shap_importance_bar.png                       121.0 KB
+  reports/explanations/waterfall_false_positive.png                   78.8 KB
+  reports/explanations/waterfall_new_vpa_velocity.png                 82.8 KB
+  reports/explanations/waterfall_odd_hour_phishing.png                81.1 KB
+  reports/explanations/waterfall_rupee_1_test_large_leg.png           85.6 KB
+  reports/explanations/waterfall_rupee_1_test_probe_leg.png           83.3 KB

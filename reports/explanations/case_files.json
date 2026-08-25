@@ -5,7 +5,7 @@
     "amount": 1.0,
     "timestamp": "2026-07-17 13:03:53",
     "receiver_vpa_age_days": 1,
-    "probability": 0.9618873655235372,
+    "probability": 0.9718466672349946,
     "decision": "BLOCK",
     "reasons": [
       "age of the receiving UPI ID (1 day old)",
@@ -19,12 +19,12 @@
     "amount": 13500.0,
     "timestamp": "2026-08-01 06:31:45",
     "receiver_vpa_age_days": 0,
-    "probability": 0.9338207828802148,
+    "probability": 0.9441360358595949,
     "decision": "BLOCK",
     "reasons": [
       "age of the receiving UPI ID (created today)",
-      "gap since the sender's previous payment (43 seconds after the previous one)",
-      "repeat payment to the same receiver (yes)"
+      "how fast this account is collecting (2 payments in 10 minutes)",
+      "gap since the sender's previous payment (43 seconds after the previous one)"
     ]
   },
   {
@@ -33,12 +33,12 @@
     "amount": 70005.0,
     "timestamp": "2026-07-13 07:25:03",
     "receiver_vpa_age_days": 0,
-    "probability": 0.8543545506177302,
+    "probability": 0.9321337538907274,
     "decision": "BLOCK",
     "reasons": [
       "age of the receiving UPI ID (created today)",
-      "transaction amount (Rs.70,005)",
-      "how fast this account is collecting (3 payments in 10 minutes)"
+      "how fast this account is collecting (3 payments in 10 minutes)",
+      "transaction amount (Rs.70,005)"
     ]
   },
   {
@@ -47,7 +47,7 @@
     "amount": 25393.08,
     "timestamp": "2026-07-25 03:45:20",
     "receiver_vpa_age_days": 9,
-    "probability": 0.9047387106103072,
+    "probability": 0.9171580813301478,
     "decision": "BLOCK",
     "reasons": [
       "transaction amount (Rs.25,393)",
@@ -61,12 +61,12 @@
     "amount": 35333.73,
     "timestamp": "2026-07-11 09:11:28",
     "receiver_vpa_age_days": 6,
-    "probability": 0.3853419872069004,
+    "probability": 0.35599825686928716,
     "decision": "BLOCK",
     "reasons": [
       "transaction amount (Rs.35,334)",
-      "size of the sender's previous payment (Rs.0)",
-      "how much this account has just collected (Rs.35,334 in 10 minutes)"
+      "how much this account has just collected (Rs.35,334 in 10 minutes)",
+      "size of the sender's previous payment (Rs.0)"
     ]
   }
 ]
