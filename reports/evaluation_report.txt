@@ -8,9 +8,9 @@ Class balance: 500 fraud / 99,500 legitimate (0.500% positive, 1:199 ratio)
 Dropped before training: transaction_id, timestamp, sender_vpa, receiver_vpa, payment_id, order_id, merchant_id, fraud_pattern, would_be_disputed, dispute_reason_code, dispute_respond_by, ring_id
   (`fraud_pattern` is label-derived metadata from Module 1 - keeping it would leak the target)
 
-Engineered 35 features: 16 numeric, 14 binary, 5 categorical
-  numeric    : hour_of_day, day_of_week, hour_sin, hour_cos, amount, log_amount, receiver_vpa_age_days, log_receiver_vpa_age, time_since_last_txn_sec, log_time_since_last, receiver_local_len, sender_local_len, receiver_digit_ratio, prev_amount, log_prev_amount, prev_amount_ratio
-  binary     : is_night_txn, is_weekend, is_micro_payment, is_round_amount, is_new_receiver_vpa, is_recent_receiver_vpa, is_first_txn, is_rapid_txn, sender_vpa_is_mobile, receiver_vpa_is_mobile, receiver_starts_with_digit, receiver_is_merchant_like, receiver_has_suspicious_keyword, same_receiver_as_prev
+Engineered 41 features: 21 numeric, 15 binary, 5 categorical
+  numeric    : hour_of_day, day_of_week, hour_sin, hour_cos, amount, log_amount, receiver_vpa_age_days, log_receiver_vpa_age, time_since_last_txn_sec, log_time_since_last, receiver_local_len, sender_local_len, receiver_digit_ratio, prev_amount, log_prev_amount, prev_amount_ratio, receiver_fanin_10m, receiver_fanin_1h, receiver_txn_count_10m, receiver_amount_10m, sender_fanout_1h
+  binary     : is_night_txn, is_weekend, is_micro_payment, is_round_amount, is_new_receiver_vpa, is_recent_receiver_vpa, is_first_txn, is_rapid_txn, sender_vpa_is_mobile, receiver_vpa_is_mobile, receiver_starts_with_digit, receiver_is_merchant_like, receiver_has_suspicious_keyword, same_receiver_as_prev, receiver_is_hub
   categorical: sender_bank_handle, receiver_bank_handle, sender_city, merchant_category, payment_method
 
 ==============================================================================
@@ -21,13 +21,13 @@ DATA SPLITS - grouped on scam incident + stratified
   test         20,000 rows    100 fraud   0.500%
   Validation exists so early stopping and threshold calibration never see the test set.
 
-Preprocessed matrix: 129 columns after one-hot encoding
+Preprocessed matrix: 135 columns after one-hot encoding
 
 ==============================================================================
 TRAINING
 ==============================================================================
 XGBoost      : scale_pos_weight = 63680/320 = 199.0
-               early stopping at 71 trees (best validation aucpr = 0.9907)
+               early stopping at 87 trees (best validation aucpr = 0.9966)
 RandomForest : class_weight = 'balanced_subsample', 400 trees
 
 ==============================================================================
@@ -36,18 +36,18 @@ MODEL SELECTION - 5-fold cross-validated PR-AUC
 PR-AUC is the honest summary under 0.5% prevalence; ROC-AUC looks flattering
 no matter what you do here. The preprocessor is refitted inside each fold.
 
-  XGBoost        PR-AUC 0.9825 +/- 0.0094   folds: 0.9894, 0.9847, 0.9867, 0.9639, 0.9878
-  RandomForest   PR-AUC 0.9844 +/- 0.0054   folds: 0.9772, 0.9870, 0.9880, 0.9788, 0.9910
+  XGBoost        PR-AUC 0.9936 +/- 0.0046   folds: 0.9967, 0.9944, 0.9962, 0.9845, 0.9964
+  RandomForest   PR-AUC 0.9951 +/- 0.0020   folds: 0.9912, 0.9948, 0.9967, 0.9965, 0.9960
 
 ==============================================================================
 MODEL COMPARISON
 ==============================================================================
 Model           PR-AUC(cv)  PR-AUC(val)  PR-AUC(test)  ROC-AUC(test)   F1(test)   Recall  Precision
 ---------------------------------------------------------------------------------------------------
-XGBoost             0.9825       0.9894        0.9675         0.9999     0.8913   0.8200     0.9762
-RandomForest        0.9844       0.9772        0.9802         0.9999     0.9119   0.8800     0.9462
+XGBoost             0.9936       0.9967        0.9894         0.9999     0.9022   0.8300     0.9881
+RandomForest        0.9951       0.9912        0.9958         1.0000     0.9362   0.8800     1.0000
 
-Selected: RandomForest  (cross-validated PR-AUC 0.9844 +/- 0.0054)
+Selected: RandomForest  (cross-validated PR-AUC 0.9951 +/- 0.0020)
 
 ==============================================================================
 DECISION THRESHOLD CALIBRATION
@@ -57,25 +57,25 @@ pricing a missed fraud at its transaction amount and a false alarm at Rs.150.
 Calibrated on 5-fold out-of-fold probabilities over train+validation
 (~400 positives), never on the test set.
 
-  Shipped threshold         : 0.1541
-  Precision-at-recall point : 0.5293  (recall 0.9050, precision 0.9211 out-of-fold)
-  Cost-optimal point        : 0.1541  (recall 1.0000, expected loss Rs.25,650)
-  F1-optimal threshold      : 0.4755 (F1 = 0.9210)
-  Single-split alternative  : 0.5488  (what the 80-positive validation split alone would have suggested)
+  Shipped threshold         : 0.0693
+  Precision-at-recall point : 0.6697  (recall 0.9075, precision 0.9891 out-of-fold)
+  Cost-optimal point        : 0.0693  (recall 1.0000, expected loss Rs.32,700)
+  F1-optimal threshold      : 0.5520 (F1 = 0.9698)
+  Single-split alternative  : 0.6635  (what the 80-positive validation split alone would have suggested)
   Default baseline          : 0.50
 
   Out-of-fold comparison (400 fraud rows, the largest sample available):
                                 Precision   Recall       F1   Alarms  Missed   Expected loss
-    default 0.50                   0.8998   0.9200   0.9098       41      32    Rs.1,352,433
-    precision-at-recall 0.5293     0.9211   0.9050   0.9130       31      38    Rs.1,666,331
-    cost-optimal 0.1541            0.7005   1.0000   0.8239      171       0       Rs.25,650
+    default 0.50                   0.9626   0.9650   0.9638       15      14      Rs.658,604
+    precision-at-recall 0.6697     0.9891   0.9075   0.9465        4      37    Rs.1,552,842
+    cost-optimal 0.0693            0.6472   1.0000   0.7859      218       0       Rs.32,700
 
   Why the two policies disagree, and why 'cost' is the one shipping:
   the 90% recall floor sits below what this model achieves, so
   'maximise precision' is free to climb the threshold until it hits the floor.
-  Out-of-fold that buys +22.1% precision and +140 alarms,
-  at the price of +38 fraud rows let through.
-  Priced in rupees the trade is negative by Rs.1,640,681: a missed mule
+  Out-of-fold that buys +34.2% precision and +214 alarms,
+  at the price of +37 fraud rows let through.
+  Priced in rupees the trade is negative by Rs.1,520,142: a missed mule
   transfer costs its full amount, a false alarm costs one Rs.150 review.
   Active policy is 'cost' (set THRESHOLD_POLICY at the top of this
   file to switch). Raising TARGET_RECALL has much the same effect.
@@ -86,39 +86,39 @@ TEST SET EVALUATION - RandomForest
   A) DEFAULT THRESHOLD  (threshold = 0.5000)
                           Predicted
                      Legitimate      Fraud
-    Actual Legitimate     19,891          9      <- false alarms: 9
-           Fraud               8         92      <- fraud missed: 8
-    Precision 0.9109   Recall 0.9200   F1 0.9154
+    Actual Legitimate     19,897          3      <- false alarms: 3
+           Fraud               4         96      <- fraud missed: 4
+    Precision 0.9697   Recall 0.9600   F1 0.9648
 
-  B) CALIBRATED THRESHOLD  (threshold = 0.1541)
+  B) CALIBRATED THRESHOLD  (threshold = 0.0693)
                           Predicted
                      Legitimate      Fraud
-    Actual Legitimate     19,869         31      <- false alarms: 31
-           Fraud               1         99      <- fraud missed: 1
-    Precision 0.7615   Recall 0.9900   F1 0.8609
+    Actual Legitimate     19,860         40      <- false alarms: 40
+           Fraud               0        100      <- fraud missed: 0
+    Precision 0.7143   Recall 1.0000   F1 0.8333
 
-  Moving 0.50 -> 0.1541: fraud caught 92 -> 99 (+7), false alarms 9 -> 31 (+22)
+  Moving 0.50 -> 0.0693: fraud caught 96 -> 100 (+4), false alarms 3 -> 40 (+37)
 
   Note: on this particular test split the default threshold scores higher.
-  With 100 fraud rows and 9 false positive(s) in the whole split, that
+  With 100 fraud rows and 3 false positive(s) in the whole split, that
   comparison is noise - the precision gain the calibrated threshold buys
   out-of-fold simply has no room to show up here. The threshold was not
   re-tuned to fix this, because tuning against the test set is precisely
   the error the three-way split exists to prevent. The recall floor still
-  holds (99% >= 90%), which is the contract the policy promises.
+  holds (100% >= 90%), which is the contract the policy promises.
 
   Threshold-independent (ranking quality):
-    ROC-AUC : 0.9999
-    PR-AUC  : 0.9802   (a random model would score 0.0050)
+    ROC-AUC : 1.0000
+    PR-AUC  : 0.9958   (a random model would score 0.0050)
 
 ==============================================================================
 BUSINESS IMPACT (test set, calibrated threshold)
 ==============================================================================
   Fraud value at risk    : Rs.   4,318,194
-  Fraud value blocked    : Rs.   4,297,973  (99.5% of rupees at risk)
-  Fraud value leaked     : Rs.      20,221
-  Alerts per 100k txns   :          650
-  Micro-payment (<=Rs.500) false alarms: 0 of 14,093 (0.0000%)
+  Fraud value blocked    : Rs.   4,318,194  (100.0% of rupees at risk)
+  Fraud value leaked     : Rs.           0
+  Alerts per 100k txns   :          700
+  Micro-payment (<=Rs.500) false alarms: 6 of 14,093 (0.0426%)
   (The micro-payment line is the customer-experience guardrail: chai and
    auto-rickshaw payments must not get declined to buy a little more recall.)
 
@@ -136,10 +136,10 @@ MERCHANT ECONOMICS (test set)
 
   Policy                                Total cost   Per txn    Held  Stepped up  Fraud through
   ---------------------------------------------------------------------------------------------
-  block/allow at 0.1541             Rs.    244,672     12.23     130           -              1
-  accept / step-up / hold           Rs.    180,472      9.02      75       1,231              0
+  block/allow at 0.0693             Rs.    280,242     14.01     140           -              0
+  accept / step-up / hold           Rs.    115,029      5.75      78         897              0
 
-  Challenge budget used  : 6.16% of 10% (headroom left)
+  Challenge budget used  : 4.49% of 10% (headroom left)
   The budget is not decoration. Minimising cost row by row, a step-up is so
   cheap that the policy will challenge anything carrying more than a fraction
   of a percent of risk - on a book with diffuse scores that reached 94% of
@@ -147,14 +147,14 @@ MERCHANT ECONOMICS (test set)
   conversion. Friction is a portfolio resource, so it is capped and then spent
   on the payments where a challenge saves the most.
 
-  Adding the challenge action saves Rs.64,201 on 20,000 payments (26% of merchant loss),
-  by moving 1,231 payments off the analyst queue and onto a
+  Adding the challenge action saves Rs.165,213 on 20,000 payments (59% of merchant loss),
+  by moving 897 payments off the analyst queue and onto a
   step-up that costs a slice of conversion instead of the whole order. Manual
-  holds fall from 130 to 75.
+  holds fall from 140 to 78.
 
   Card-network dispute covenant (Visa VDMP / Mastercard ECP):
-    Expected disputes      : 4.5 of 20,000 payments
-    Dispute ratio          : 0.0225%  (ceiling 0.90%)
+    Expected disputes      : 3.8 of 20,000 payments
+    Dispute ratio          : 0.0188%  (ceiling 0.90%)
     Within covenant        : yes
 
   Being straight about this constraint: at 0.5% fraud prevalence the covenant
@@ -169,7 +169,7 @@ RECALL BY SCAM SIGNATURE (test set, calibrated threshold)
 ==============================================================================
   Signature                         Fraud  Caught   Recall   Value at risk
   ----------------------------------------------------------------------
-  new_vpa_velocity                     30      29   96.67%    Rs.1,744,701
+  new_vpa_velocity                     30      30  100.00%    Rs.1,744,701
   odd_hour_phishing                    30      30  100.00%    Rs.1,203,678
   rupee_1_test (Rs.1 probe leg)        20      20  100.00%           Rs.20
   rupee_1_test (large leg)             20      20  100.00%    Rs.1,369,795
@@ -178,60 +178,81 @@ RECALL BY SCAM SIGNATURE (test set, calibrated threshold)
 SPLIT INTEGRITY - do scam incidents straddle train and test?
 ==============================================================================
   Test fraud rows whose receiver VPA also appears in training fraud: 0/100 (0.0%)
-  Recall on 'cold' receivers (100 rows, never seen): 99.00%
+  Recall on 'cold' receivers (100 rows, never seen): 100.00%
 
-  A stratified random split cuts through scam incidents - a Rs.1 probe can sit in
-  train while its large follow-up sits in test, and one mule VPA is scattered across
-  both. The cold-receiver recall is the fairer estimate for a brand-new scam ring.
-  Switching to a group-aware split (grouped on receiver_vpa) would remove the effect
-  entirely; the stratified split was kept because it is what the module specifies.
+  A stratified random split cuts through scam incidents - the Rs.1 probe lands in
+  train while its drain lands in test, and one mule VPA is scattered across both.
+  The model then recognises a receiver it has already been taught, and the score
+  is flattered. Under that split the bleed rate here was 59%.
+
+  Module 1 now emits `ring_id`, so the split groups on the incident and the bleed
+  is gone. It cost real headline performance and the numbers above are the ones
+  that survived: PR-AUC 0.9955 -> 0.9802, and recall on receivers the model has
+  never seen is 99% rather than a flattered 100%. That is the point of measuring
+  it - the earlier figure was partly a property of the split, not of the model.
 
 ==============================================================================
-ABLATION - how much rests on receiver VPA age?
+ABLATION - what is each block of features actually worth?
 ==============================================================================
-  Dropped: receiver_vpa_age_days, log_receiver_vpa_age, is_new_receiver_vpa, is_recent_receiver_vpa
-                            PR-AUC    Recall   Precision        F1
-  Full feature set          0.9802    0.9900      0.7615    0.8609
-  Without VPA age           0.8788    0.9200      0.5860    0.7160
+  Feature set                           PR-AUC    Recall   Precision        F1
+  ----------------------------------------------------------------------------
+  everything                            0.9958    1.0000      0.7143    0.8333
+  without receiver VPA age              0.9413    0.8300      0.8646    0.8469
+  without graph features                0.9675    0.8200      0.9762    0.8913
+  without either                        0.8788    0.9200      0.5860    0.7160
 
-  Every fraudulent receiver in the synthetic data is 0-20 days old, so this
-  feature will always carry real signal here. Module 1 deliberately routes a
-  slice of ordinary traffic - and a thin tail of genuine big-ticket payments -
-  to brand-new VPAs, so account age is no longer separable on its own: the
-  rule 'receiver is 20 days old or younger' is only ~7% precise on this data.
-  The gap above is what the temporal, velocity and VPA-structure features
-  deliver alone, and is the better guide to behaviour on real traffic.
+  Account age. Every fraudulent receiver in this data is 0-20 days old, so the
+  feature will always carry signal here. Module 1 deliberately routes a slice of
+  ordinary traffic - and a thin tail of genuine big-ticket payments - to brand
+  new VPAs, so age alone is only ~7% precise. Real traffic makes it noisier still,
+  and often missing, which is why the row without it is the one to plan against.
+
+  Graph features. Priced against the age-ablated model rather than the full one,
+  because the full model is close to saturated and improving it proves nothing.
+  With account age removed, adding fan-in and collection velocity moves PR-AUC
+  0.8788 -> 0.9413 (+0.0625) and recall 0.9200 -> 0.8300.
+
+  What that buys is a different *kind* of evidence. Account age is an attribute
+  of the receiving account, so a fraudster defeats it by ageing a mule for three
+  weeks before using it. Fan-in is a property of the ring's behaviour: collecting
+  from several victims in minutes is the thing the scam has to do to be the scam.
+  A ring cannot age its way out of it.
+
+  And the signal is strictly backward-looking, which the ring assembly shows:
+  payment 1 into a mule sees fan-in 1 and looks ordinary, payment 3 sees 2, and
+  by payment 5 the third distinct victim has arrived and the hub flag fires. The
+  model is not being told the future - it is watching the star form.
 
 ==============================================================================
 TOP FEATURE IMPORTANCES
 ==============================================================================
-  num__receiver_vpa_age_days                  0.1610  ########################################
-  num__log_amount                             0.1547  ######################################
-  num__amount                                 0.1401  ##################################
-  num__log_receiver_vpa_age                   0.1364  #################################
-  bin__is_recent_receiver_vpa                 0.0949  #######################
-  bin__receiver_is_merchant_like              0.0484  ############
-  num__prev_amount_ratio                      0.0421  ##########
-  bin__is_micro_payment                       0.0277  ######
-  bin__is_new_receiver_vpa                    0.0238  #####
-  num__hour_of_day                            0.0213  #####
-  bin__same_receiver_as_prev                  0.0187  ####
-  num__time_since_last_txn_sec                0.0160  ###
+  num__receiver_vpa_age_days                  0.1691  ########################################
+  num__log_receiver_vpa_age                   0.1503  ###################################
+  num__log_amount                             0.1192  ############################
+  num__amount                                 0.1162  ###########################
+  num__receiver_amount_10m                    0.1018  ########################
+  bin__is_recent_receiver_vpa                 0.0717  ################
+  num__prev_amount_ratio                      0.0345  ########
+  bin__receiver_is_merchant_like              0.0327  #######
+  num__receiver_txn_count_10m                 0.0235  #####
+  num__hour_of_day                            0.0221  #####
+  bin__is_micro_payment                       0.0198  ####
+  bin__is_new_receiver_vpa                    0.0172  ####
 
 ==============================================================================
 ARTIFACTS
 ==============================================================================
-  models/finguard_best_model.joblib           5,476.8 KB
-  models/finguard_random_forest.joblib        5,476.8 KB
-  models/finguard_xgboost.joblib                179.4 KB
-  models/model_config.json                       15.0 KB
-  models/preprocessor.joblib                      7.5 KB
-  reports/confusion_matrices.png                 46.1 KB
+  models/finguard_best_model.joblib           4,655.4 KB
+  models/finguard_random_forest.joblib        4,655.4 KB
+  models/finguard_xgboost.joblib                209.0 KB
+  models/model_config.json                       16.5 KB
+  models/preprocessor.joblib                      8.0 KB
+  reports/confusion_matrices.png                 48.2 KB
   reports/evaluation_report.txt                  14.7 KB
-  reports/explainability_report.txt               8.1 KB
-  reports/feature_importance.png                112.2 KB
-  reports/pr_roc_curves.png                      96.9 KB
-  reports/threshold_calibration.png             106.8 KB
+  reports/explainability_report.txt               7.9 KB
+  reports/feature_importance.png                114.9 KB
+  reports/pr_roc_curves.png                      93.2 KB
+  reports/threshold_calibration.png             104.0 KB
 
 ==============================================================================
 MODULE 3 USAGE

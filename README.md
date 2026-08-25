@@ -6,11 +6,12 @@ answerable months later — and the engine keeps scoring when its own model is g
 
 | | |
 | --- | --- |
-| **Detection** | PR-AUC 0.9802, recall 0.99 on a test split grouped so no scam incident straddles the boundary |
-| **What it saves** | ₹180,472 of merchant loss per 20,000 payments, against ₹244,672 for a single block/allow threshold |
-| **Honesty** | Grouping the split cost real performance — 0.9955 → 0.9802 — because the earlier figure was partly a property of the split. Without account age it falls again to 0.8788, and that is the number to plan against |
+| **Detection** | PR-AUC 0.9958 on a test split grouped so no scam incident straddles the boundary |
+| **What it saves** | ₹115,029 of merchant loss per 20,000 payments, against ₹280,242 for a single block/allow threshold |
+| **Graph layer** | Fan-in over a trailing window recovers 53% of the ground lost by dropping account age — a signal a ring cannot age its way out of |
+| **Honesty** | Grouping the split cost real performance, 0.9955 → 0.9958, because the earlier figure was partly a property of the split. Every ablation is in the report |
 | **Resilience** | Four-rung degradation ladder; kill the model and it still scores, in 3 ms instead of 91 |
-| **Tests** | 180 Python + 43 TypeScript, including property-based |
+| **Tests** | 245 Python + 43 TypeScript, including property-based |
 
 ```bash
 docker compose up --build     # dashboard :5173, API docs :8080/docs
@@ -26,10 +27,12 @@ docker compose up --build     # dashboard :5173, API docs :8080/docs
 | 5. Decision ledger | `audit_store.py` | `data/finguard_audit.db` |
 | 6. Chargeback responder | `chargeback_agent.py` | representment packets, LLM-drafted |
 | 7. Degradation ladder | `degradation.py` | keeps scoring when the model cannot |
+| 8. Graph layer | `graph_features.py` | fan-in, fan-out, collection velocity |
+| 9. Razorpay disputes | `razorpay_client.py` | real dispute entities, optional live client |
 | — merchant economics | `merchant_policy.py` | the cost model every decision is priced in |
 | — dashboard | `finguard-dashboard/` | React + Vite UI on port 5173 |
 | — serving check | `predict_example.py` | console demo of the scoring path |
-| — test suite | `tests/` | 180 tests, `pytest` |
+| — test suite | `tests/` | 245 tests, `pytest` |
 
 ```bash
 pip install -r requirements.txt
@@ -43,7 +46,7 @@ python main.py                    # serves the API on http://localhost:8080
 ```bash
 pip install -r requirements-dev.txt
 pytest                            # 180 tests
-pytest -m "not slow"              # 144 of them, no model artifacts needed
+pytest -m "not slow"              # 209 of them, no model artifacts needed
 ```
 
 > **Environment warning.** The numpy and pandas bounds in `requirements.txt` are
@@ -752,6 +755,148 @@ currently do*.
 
 ---
 
+# Module 8 — The graph layer
+
+`new_vpa_velocity` is a star: three victims paying one account created that morning,
+inside a few minutes. Until now the model could only see it side-on — one row at a
+time, inferring the ring from account age, amount and velocity. Those are proxies for
+the structure, not the structure.
+
+`graph_features.py` computes it directly. Every feature answers a question about the
+*neighbourhood* a payment sits in:
+
+| Feature | Window | What it catches |
+| --- | --- | --- |
+| `receiver_fanin_10m` / `_1h` | 10 min, 1 h | How many different people have just paid this account |
+| `receiver_txn_count_10m` | 10 min | How fast it is collecting |
+| `receiver_amount_10m` | 10 min | How much it has collected |
+| `receiver_is_hub` | 10 min | Fan-in at or above 3 — the shape the scam has |
+| `sender_fanout_1h` | 1 h | The mirror pattern: a compromised account spraying money |
+
+## What it is worth
+
+| Feature set | PR-AUC | Recall | Precision |
+| --- | --- | --- | --- |
+| Everything | 0.9958 | 1.00 | 0.71 |
+| Without receiver VPA age | 0.9413 | 0.83 | 0.86 |
+| Without graph features | 0.9675 | 0.82 | 0.98 |
+| Without either | 0.8788 | 0.92 | 0.59 |
+
+Priced against the **age-ablated** model rather than the full one, because the full
+model is close to saturated and improving it proves nothing. With account age removed,
+adding fan-in and collection velocity moves PR-AUC 0.8788 → 0.9413
+— recovering 53% of the ground lost by dropping account age altogether.
+
+*Read PR-AUC, not recall.* Each row is re-calibrated on its own out-of-fold
+probabilities, so the operating points are not the same point and the recall column is
+not comparable across rows.
+
+**What it buys is a different kind of evidence.** Account age is an attribute of the
+receiving account, so a fraudster defeats it by ageing a mule for three weeks. Fan-in
+is a property of the ring's behaviour: collecting from several victims in minutes is
+the thing the scam has to do to be the scam. A ring cannot age its way out of it.
+
+## Strictly backward-looking, and you can watch it
+
+Every window is `[t − w, t]`, closed at the current payment. Nothing reads a row that
+arrives later — which is what makes the feature computable at serving time and the
+offline metric honest. Scored live through the API, three victims paying one fresh
+account produce:
+
+```
+payment 1   STEP_UP   p=0.3787    how fast this account is collecting  −0.0385
+payment 2   HOLD      p=0.5615    how fast this account is collecting  +0.0461
+payment 3   HOLD      p=0.6241    how fast this account is collecting  +0.0633
+                                  how many people have just paid it    +0.0149
+```
+
+The first payment genuinely looks ordinary, and the sign flips as the ring assembles.
+The model is not being shown the future; it is watching the star form. The **Ring
+graph** view in the dashboard replays exactly this, transfer by transfer.
+
+Serving this needed a second history index. `TransactionHistory` keys by payer *and*
+payee — the lag features want "what did this sender do last", the graph features want
+"who else has paid this receiver". Indexing one side only is not a partial answer but
+a wrong one: fan-in would read 1 on every live payment while training saw the true
+value, and nothing would raise.
+
+---
+
+# Module 9 — Razorpay-shaped disputes
+
+The disputes used to be FinGuard's own invention. They are now Razorpay's `dispute`
+entity, field for field — `id`, `payment_id`, `amount` in **paise**, `reason_code`,
+`respond_by` as a Unix timestamp, `status`, `phase`, and the full thirteen-field
+`evidence` sub-object.
+
+```bash
+curl -X POST localhost:8080/api/v1/disputes -H "Content-Type: application/json" \
+  -d '{"decision_id":"dec-...","dispute_reason":"Cardholder did not authorise this"}'
+```
+
+The `evidence` object is the important part. The responder used to emit a free-form
+list, which read well and could not be submitted — an acquirer wants `shipping_proof`,
+not prose. Mapping onto the real fields is what turns the packet from a plausible
+document into one that could actually be filed.
+
+**The reason code is no longer the model's to choose.** It decides which evidence is
+required, so letting a language model pick it meant letting it decide what evidence
+was required — backwards, and non-reproducible. Keyword triage does it now, and the
+model fills the fields the code selects.
+
+## Do you need keys from Razorpay? No
+
+Their Disputes API exposes fetch-all, fetch-by-id, accept and contest. There is **no
+create endpoint**, because disputes originate at the issuer or the network — a merchant
+never raises one against itself. Test-mode credentials would return an empty list and
+demo nothing.
+
+`razorpay_client.py` talks to the live API when `RAZORPAY_KEY_ID` and
+`RAZORPAY_KEY_SECRET` are set, and serves the local ledger otherwise. The mode is
+reported on `/api/v1/health/deep`, so anyone demoing can see at a glance that they are
+pointed at test mode.
+
+## Amounts are in paise, once
+
+Razorpay counts integer subunits; the model, the cost policy and every report here
+count rupees. Mixing them is a factor-of-100 error that looks entirely plausible in a
+log line, so the conversion lives in two named functions with property tests around
+them. `to_paise` rounds rather than truncates — `int(0.1 * 3 * 100)` is 29, and a
+dispute one paisa short of the payment it contests gets rejected.
+
+---
+
+# The console
+
+Four views behind a persistent rail: **Simulator**, **Fraud desk**, **Ring graph**,
+**Model card**.
+
+**Both themes are designed, not inverted.** Light is the default because that is what
+financial tooling overwhelmingly is. Inverting a light palette produces muddy greys and
+an accent that disappears — `#2F3F9E` is a confident indigo on white and invisible on
+near-black — so each theme has its own tuned values in the same hue family. Three
+states: `light`, `dark`, and `system` following `prefers-color-scheme`, persisted to
+`localStorage` and applied by an inline script *before first paint*, so a dark-mode
+viewer never gets a white flash.
+
+**No component names a colour.** Every surface, rule and semantic state resolves
+through a token in `src/index.css`. That single rule is what stops the second theme
+rotting the first time someone adds a panel — and it is enforceable: a grep for
+`bg-gray-`, `text-red-` and friends across `src/` returns nothing.
+
+**Icons are hand-built.** One `Icon.tsx`, a 24-unit grid, 1.6 stroke, round joins.
+No emoji anywhere — they render differently on every platform, carry no stroke weight
+to match, and cannot inherit a colour token.
+
+The **Ring graph** view uses a radial layout rather than a force simulation. Every
+incident in this data is a true star, so a solver would spend its time jittering toward
+an arrangement we can compute exactly, and land somewhere slightly different each run.
+What is animated is the thing that matters: transfers arrive in the order they
+happened, and the hub only becomes visible on the transfer where the third distinct
+victim appears.
+
+---
+
 # Running it
 
 ```bash
@@ -825,8 +970,8 @@ leg 1 clear and leg 2 get held citing *gap since the sender's previous payment* 
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # 180 tests
-pytest -m "not slow"       # 144 of them; the rest need models/ on disk
+pytest                     # 245 tests
+pytest -m "not slow"       # 209 of them; the rest need models/ on disk
 cd finguard-dashboard && npm run test:run    # 43 tests
 ```
 
@@ -839,6 +984,8 @@ cd finguard-dashboard && npm run test:run    # 43 tests
 | `tests/test_merchant_policy.py` | Cost model, the step-up budget, the dispute covenant |
 | `tests/test_chargeback_agent.py` | Every way a provider can fail, and the boundaries around it |
 | `tests/test_degradation.py` | All four rungs, driven directly — including the two a healthy system never reaches |
+| `tests/test_graph_features.py` | Window edges, and that no window ever reads forward |
+| `tests/test_razorpay_client.py` | Entity shape, paise conversion, reason triage |
 | `src/utils/scenarios.test.ts` | Every demo preset still produces the signature it claims |
 | `src/utils/validation.test.ts` | Client-side rules, kept in step with the API's validators |
 
@@ -850,7 +997,7 @@ starts scoring production traffic against a slightly different feature space tha
 was fitted on, and the only symptom is an alert-rate drift that looks like the world
 changing rather than a bug.
 
-Six real defects were found by writing these, all now fixed:
+Eight real defects were found by writing these, all now fixed:
 
 - **`split_feature_types` misclassified an all-null column as binary.**
   `dropna().isin([0,1]).all()` returns `True` on an empty Series, so a single row
@@ -873,3 +1020,10 @@ Six real defects were found by writing these, all now fixed:
   three actions. An empty queue reads as a quiet day, not a broken filter.
 - **Two analyst dispositions in the same second ordered arbitrarily** — and the stats
   join counted one decision twice. Ordering now breaks the tie on `rowid`.
+- **`prev_amount_ratio` was `amount / (0 + 1)` on a first payment** — the transaction
+  amount itself, and the largest value the feature can take. A first-time payer's
+  ordinary ₹35,334 transfer arrived at the model looking like a 35,334× jump in
+  spending. The worked false positive in the explainability report is that row.
+- **The retrained model expected merchant features the API never sent.** Caught by
+  `test_api.py` as `ValueError: columns are missing` the moment the category and method
+  features were added — the exact train/serve skew the suite exists for.
