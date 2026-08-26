@@ -8,6 +8,7 @@ import { RingGraph } from './components/RingGraph';
 import { ModelCard } from './components/ModelCard';
 import { useFraudSimulation } from './hooks/useFraudSimulation';
 import { useApiHealth } from './hooks/useApiHealth';
+import { Notice } from './components/ui';
 
 function App() {
   const [view, setView] = useState<ViewId>('simulator');
@@ -22,24 +23,15 @@ function App() {
       threshold={health?.threshold}
     >
       {view === 'simulator' && (
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-6">
           {error && (
-            <div
-              role="alert"
-              className="fg-surface px-4 py-3"
-              style={{
-                borderColor: 'var(--hold)',
-                background: 'var(--hold-soft)',
-                color: 'var(--hold)',
-                fontSize: 13,
-              }}
-            >
-              <strong style={{ fontWeight: 600 }}>Scoring failed. </strong>
+            <Notice tone="hold" icon="alert">
+              <strong style={{ fontWeight: 700 }}>Scoring failed. </strong>
               {error}
-            </div>
+            </Notice>
           )}
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             <TransactionSimulator onSimulate={simulateTransaction} isLoading={isLoading} />
             <EvaluationPanel
               isLoading={isLoading}

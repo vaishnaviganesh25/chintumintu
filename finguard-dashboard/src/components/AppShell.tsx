@@ -1,28 +1,27 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { motion } from 'framer-motion';
 import { Icon, type IconName } from './Icon';
+import { Logotype } from './Marks';
+import { Button } from './ui';
+import { SPRING, useReducedMotion } from '../motion';
 import { applyTheme, readTheme, type Theme } from '../theme';
 import { fetchDeepHealth, setModelDisabled } from '../services/opsApi';
 import type { DeepHealth } from '../types';
 
 /**
- * The application frame: a persistent left rail, a status bar, and the active view.
+ * The frame: a solid bordered rail, a glass top bar, and the active view.
  *
- * A rail rather than a tab strip. Tabs read as sections of a page; a rail reads as an
+ * A rail rather than tabs. Tabs read as sections of a page; a rail reads as an
  * application with places in it, and this product has four genuinely different jobs —
- * scoring a payment, working a queue, investigating a ring, and reading the model's
- * own card.
+ * score a payment, work a queue, investigate a ring, read the model's own card.
+ *
+ * The top bar is the one piece of chrome that is glass rather than solid, because it
+ * is the only piece that content scrolls underneath.
  */
 
 export type ViewId = 'simulator' | 'desk' | 'rings' | 'model';
 
-interface NavEntry {
-  id: ViewId;
-  label: string;
-  icon: IconName;
-  hint: string;
-}
-
-const NAV: NavEntry[] = [
+const NAV: { id: ViewId; label: string; icon: IconName; hint: string }[] = [
   { id: 'simulator', label: 'Simulator', icon: 'flask', hint: 'Score a payment against the live model' },
   { id: 'desk', label: 'Fraud desk', icon: 'inbox', hint: 'Work the alert queue' },
   { id: 'rings', label: 'Ring graph', icon: 'network', hint: 'Investigate a mule ring' },
@@ -42,26 +41,23 @@ function ThemeSwitch() {
   const next = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
 
   return (
-    <button
-      type="button"
+    <Button
       onClick={() => setTheme(next)}
-      className="fg-btn"
-      style={{ padding: '6px 9px' }}
-      // The label names the current state and the action, so a screen-reader user is
-      // not left guessing which of three states a single button is in.
+      // Names the current state and the action, so a screen-reader user is not left
+      // guessing which of three states one button is in.
       aria-label={`Theme: ${theme}. Switch to ${next}.`}
       title={`Theme: ${theme} — click for ${next}`}
+      style={{ padding: '7px 9px' }}
     >
       <Icon name={THEME_ICON[theme]} size={15} />
-    </button>
+    </Button>
   );
 }
 
 /**
- * Which rung of the degradation ladder is answering, and — when the chaos endpoint is
- * enabled — the switch that proves it works.
+ * Which rung of the degradation ladder is answering, and the switch that proves it.
  *
- * A silent fallback is the failure this exists to prevent. If the model goes and
+ * A silent fallback is the failure this exists to prevent: if the model goes and
  * nothing says so, the alert rate moves and everyone concludes the world changed.
  */
 function RungStatus() {
@@ -77,15 +73,11 @@ function RungStatus() {
   }, []);
 
   if (!health) {
-    return (
-      <span className="fg-label" style={{ color: 'var(--faint)' }}>
-        API unreachable
-      </span>
-    );
+    return <span className="nb-label">API unreachable</span>;
   }
 
   const modelDown = health.dependencies.model?.status !== 'ok';
-  const tone = health.serving ? 'var(--accept)' : 'var(--challenge)';
+  const fill = health.serving ? 'var(--accept-fill)' : 'var(--challenge-fill)';
 
   const toggle = async () => {
     setBusy(true);
@@ -102,98 +94,102 @@ function RungStatus() {
   return (
     <div className="flex items-center gap-2">
       <span
-        className="inline-flex items-center gap-2 fg-mono"
+        className="nb-mono inline-flex items-center gap-2"
         style={{
           fontSize: 11,
-          color: tone,
-          background: health.serving ? 'var(--accept-soft)' : 'var(--challenge-soft)',
-          border: `1px solid ${tone}`,
-          borderRadius: 'var(--radius-sm)',
-          padding: '3px 8px',
+          fontWeight: 700,
+          color: '#0b0b0b',
+          background: fill,
+          border: 'var(--border)',
+          borderRadius: 999,
+          padding: '3px 10px',
         }}
         title="Which rung of the degradation ladder is answering right now"
       >
-        <span
-          style={{ width: 5, height: 5, borderRadius: 99, background: tone, display: 'inline-block' }}
+        <motion.span
+          animate={health.serving ? {} : { opacity: [1, 0.35, 1] }}
+          transition={{ repeat: Infinity, duration: 1.6 }}
+          style={{ width: 6, height: 6, borderRadius: 999, background: '#0b0b0b' }}
         />
         {health.rung_label}
       </span>
 
       {health.chaos_endpoint_enabled && (
-        <button
-          type="button"
+        <Button
+          variant={modelDown ? 'primary' : 'danger'}
+          icon="power"
           onClick={() => void toggle()}
           disabled={busy}
-          className="fg-btn"
-          style={{ padding: '5px 9px', fontSize: 12 }}
+          style={{ fontSize: 12, padding: '6px 10px' }}
           title={modelDown ? 'Bring the model back' : 'Disable the model and watch the ladder'}
         >
-          <Icon name="power" size={14} />
           {modelDown ? 'Restore' : 'Kill model'}
-        </button>
+        </Button>
       )}
     </div>
   );
 }
 
-interface AppShellProps {
+export function AppShell({
+  view,
+  onNavigate,
+  modelName,
+  threshold,
+  children,
+}: {
   view: ViewId;
   onNavigate: (view: ViewId) => void;
   modelName?: string | null;
   threshold?: number | null;
   children: ReactNode;
-}
-
-export function AppShell({ view, onNavigate, modelName, threshold, children }: AppShellProps) {
+}) {
+  const reduced = useReducedMotion();
   const active = NAV.find((entry) => entry.id === view);
 
   return (
-    <div className="min-h-screen flex" style={{ background: 'var(--ground)' }}>
-      {/* Rail ------------------------------------------------------------- */}
+    <div className="min-h-screen flex" style={{ background: 'var(--paper)' }}>
+      {/* Rail --------------------------------------------------------------- */}
       <nav
         aria-label="Sections"
         className="hidden md:flex flex-col shrink-0"
         style={{
-          width: 216,
+          width: 232,
           background: 'var(--surface)',
-          borderRight: '1px solid var(--rule)',
+          borderRight: 'var(--border)',
         }}
       >
         <div
-          className="flex items-center gap-2.5 px-5"
-          style={{ height: 60, borderBottom: '1px solid var(--rule)' }}
+          className="flex items-center px-5"
+          style={{ height: 66, borderBottom: 'var(--border)' }}
         >
-          <span style={{ color: 'var(--accent)', display: 'flex' }}>
-            <Icon name="shield" size={21} />
-          </span>
-          <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: '-0.015em' }}>
-            FinGuard
-          </span>
+          <Logotype />
         </div>
 
-        <ul className="flex flex-col gap-0.5 p-2.5">
+        <ul className="flex flex-col gap-1.5 p-3">
           {NAV.map((entry) => {
             const selected = entry.id === view;
             return (
-              <li key={entry.id}>
+              <li key={entry.id} className="relative">
                 <button
                   type="button"
                   onClick={() => onNavigate(entry.id)}
                   aria-current={selected ? 'page' : undefined}
                   title={entry.hint}
-                  className="w-full flex items-center gap-2.5 text-left"
+                  className="w-full flex items-center gap-2.5 text-left relative"
                   style={{
-                    padding: '8px 11px',
+                    padding: '9px 12px',
                     borderRadius: 'var(--radius-sm)',
-                    fontSize: 13,
-                    fontWeight: selected ? 600 : 400,
-                    color: selected ? 'var(--accent)' : 'var(--muted)',
-                    background: selected ? 'var(--accent-soft)' : 'transparent',
-                    border: 'none',
+                    border: selected ? 'var(--border)' : 'var(--border-w) solid transparent',
+                    boxShadow: selected ? 'var(--shadow-hard-sm)' : 'none',
+                    background: selected ? 'var(--accent)' : 'transparent',
+                    color: selected ? 'var(--accent-ink)' : 'var(--muted)',
+                    fontSize: 13.5,
+                    fontWeight: selected ? 700 : 500,
                     cursor: 'pointer',
+                    transition: 'background-color var(--dur-fast), color var(--dur-fast)',
                   }}
                 >
-                  <Icon name={entry.icon} size={16} />
+                  <Icon name={entry.icon} size={17} />
                   {entry.label}
                 </button>
               </li>
@@ -201,31 +197,36 @@ export function AppShell({ view, onNavigate, modelName, threshold, children }: A
           })}
         </ul>
 
-        <div className="mt-auto p-4" style={{ borderTop: '1px solid var(--rule)' }}>
-          <p className="fg-label" style={{ marginBottom: 3 }}>Model</p>
-          <p className="fg-mono" style={{ fontSize: 12, color: 'var(--muted)' }}>
+        <div className="mt-auto p-4" style={{ borderTop: 'var(--border)' }}>
+          <p className="nb-label" style={{ marginBottom: 3 }}>
+            Model
+          </p>
+          <p className="nb-mono" style={{ fontSize: 12, color: 'var(--ink)', fontWeight: 500 }}>
             {modelName ?? 'not loaded'}
           </p>
           {typeof threshold === 'number' && (
-            <p className="fg-mono" style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>
+            <p className="nb-mono" style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>
               holds at {threshold.toFixed(4)}
             </p>
           )}
         </div>
       </nav>
 
-      {/* Content ---------------------------------------------------------- */}
+      {/* Content ------------------------------------------------------------ */}
       <div className="flex-1 min-w-0 flex flex-col">
         <header
-          className="flex items-center justify-between gap-4 px-6 shrink-0"
+          className="nb-glass flex items-center justify-between gap-4 px-6 shrink-0 sticky top-0"
           style={{
-            height: 60,
-            background: 'var(--surface)',
-            borderBottom: '1px solid var(--rule)',
+            height: 66,
+            zIndex: 30,
+            borderTop: 'none',
+            borderLeft: 'none',
+            borderRight: 'none',
+            borderRadius: 0,
           }}
         >
           <div className="min-w-0">
-            <h1 style={{ fontSize: 15, fontWeight: 600, letterSpacing: '-0.01em' }}>
+            <h1 className="nb-display" style={{ fontSize: 17, lineHeight: 1.15 }}>
               {active?.label ?? 'FinGuard'}
             </h1>
             <p style={{ fontSize: 12, color: 'var(--muted)' }} className="truncate">
@@ -239,32 +240,39 @@ export function AppShell({ view, onNavigate, modelName, threshold, children }: A
           </div>
         </header>
 
-        {/* Rail collapses on narrow screens; the sections still need to be reachable. */}
+        {/* The rail collapses on narrow screens; sections still have to be reachable. */}
         <nav
           aria-label="Sections"
-          className="flex md:hidden gap-1 px-3 py-2 overflow-x-auto shrink-0"
-          style={{ background: 'var(--surface)', borderBottom: '1px solid var(--rule)' }}
+          className="flex md:hidden gap-2 px-4 py-3 overflow-x-auto shrink-0"
+          style={{ background: 'var(--surface)', borderBottom: 'var(--border)' }}
         >
           {NAV.map((entry) => (
-            <button
+            <Button
               key={entry.id}
-              type="button"
+              variant={entry.id === view ? 'primary' : 'default'}
+              icon={entry.icon}
               onClick={() => onNavigate(entry.id)}
               aria-current={entry.id === view ? 'page' : undefined}
-              className="fg-btn shrink-0"
-              style={{
-                fontSize: 12,
-                color: entry.id === view ? 'var(--accent)' : 'var(--muted)',
-                borderColor: entry.id === view ? 'var(--accent)' : 'var(--rule-strong)',
-              }}
+              className="shrink-0"
+              style={{ fontSize: 12 }}
             >
-              <Icon name={entry.icon} size={14} />
               {entry.label}
-            </button>
+            </Button>
           ))}
         </nav>
 
-        <main className="flex-1 p-6 min-w-0">{children}</main>
+        {/* Keyed on the view so each one animates in rather than swapping in place. */}
+        <motion.main
+          key={view}
+          initial={reduced ? { opacity: 0 } : { opacity: 0, y: 10 }}
+          animate={reduced ? { opacity: 1 } : { opacity: 1, y: 0 }}
+          transition={reduced ? { duration: 0.15 } : SPRING}
+          className="flex-1 min-w-0"
+          // NN/g: 24–32px between blocks, so density does not become clutter.
+          style={{ padding: 26 }}
+        >
+          {children}
+        </motion.main>
       </div>
     </div>
   );

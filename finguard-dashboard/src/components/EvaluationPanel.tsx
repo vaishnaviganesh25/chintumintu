@@ -1,4 +1,4 @@
-import { LoadingSpinner } from './LoadingSpinner';
+import { Panel } from './ui';
 import { StatusBadge } from './StatusBadge';
 import { RiskGauge } from './RiskGauge';
 import { LatencyMetric } from './LatencyMetric';
@@ -13,14 +13,14 @@ interface EvaluationPanelProps {
 
 export function EvaluationPanel({ isLoading, results, threshold }: EvaluationPanelProps) {
   return (
-    <div className="fg-surface p-5">
-      <h2 className="text-[13px] font-semibold mb-4">Evaluation Results</h2>
+    <Panel title="Evaluation" subtitle="What the engine decided, and what each action would cost">
       
       <div className="min-h-[300px]" aria-live="polite">
         {isLoading && (
-          <div className="flex flex-col items-center justify-center h-64">
-            <LoadingSpinner />
-            <p className="text-[var(--muted)] mt-4">Analyzing transaction...</p>
+          <div className="flex flex-col gap-3" style={{ padding: '10px 0' }}>
+            <div className="nb-skeleton" style={{ height: 40, width: '55%' }} aria-hidden="true" />
+            <div className="nb-skeleton" style={{ height: 128 }} aria-hidden="true" />
+            <p className="nb-label" role="status">Scoring…</p>
           </div>
         )}
         
@@ -30,8 +30,8 @@ export function EvaluationPanel({ isLoading, results, threshold }: EvaluationPan
               <svg className="w-16 h-16 mx-auto mb-4 text-[var(--faint)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
               </svg>
-              <p className="text-lg">Awaiting input...</p>
-              <p className="text-sm text-[var(--faint)] mt-1">Enter transaction details to begin analysis</p>
+              <p className="nb-display" style={{ fontSize: 15 }}>Awaiting input</p>
+              <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 4 }}>Enter a payment, or replay a signature from the simulator.</p>
             </div>
           </div>
         )}
@@ -52,14 +52,14 @@ export function EvaluationPanel({ isLoading, results, threshold }: EvaluationPan
               />
               <div className="flex flex-col space-y-2">
                 <LatencyMetric executionTimeMs={results.execution_time_ms} />
-                <div className="text-xs text-[var(--faint)] text-center">
-                  Transaction ID: {results.transaction_id}
+                <div className="nb-mono" style={{ fontSize: 10.5, color: 'var(--faint)', textAlign: 'center' }}>
+                  {results.transaction_id}
                 </div>
               </div>
             </div>
           </div>
         )}
       </div>
-    </div>
+    </Panel>
   );
 }

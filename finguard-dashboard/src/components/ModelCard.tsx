@@ -23,8 +23,8 @@ const rupees = (v: number) => `₹${Math.round(v).toLocaleString('en-IN')}`;
 
 function Section({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
   return (
-    <section className="fg-surface" style={{ padding: '18px 20px' }}>
-      <h2 style={{ fontSize: 13, fontWeight: 600, marginBottom: note ? 2 : 12 }}>{title}</h2>
+    <section className="nb-panel" style={{ padding: '20px 22px' }}>
+      <h2 className="nb-display" style={{ fontSize: 17, marginBottom: note ? 4 : 14 }}>{title}</h2>
       {note && (
         <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12, maxWidth: '72ch' }}>
           {note}
@@ -44,11 +44,12 @@ function Table({ head, rows }: { head: string[]; rows: (string | number)[][] }) 
             {head.map((h, i) => (
               <th
                 key={h}
-                className="fg-label"
+                className="nb-label"
                 style={{
                   textAlign: i === 0 ? 'left' : 'right',
                   padding: '7px 10px',
                   background: 'var(--sunk)',
+                  borderBottom: 'var(--border)',
                   whiteSpace: 'nowrap',
                 }}
               >
@@ -63,11 +64,11 @@ function Table({ head, rows }: { head: string[]; rows: (string | number)[][] }) 
               {row.map((cell, i) => (
                 <td
                   key={i}
-                  className={i === 0 ? undefined : 'fg-mono'}
+                  className={i === 0 ? undefined : 'nb-mono'}
                   style={{
                     textAlign: i === 0 ? 'left' : 'right',
                     padding: '7px 10px',
-                    borderBottom: '1px solid var(--rule)',
+                    borderBottom: '1px solid var(--edge)',
                     color: i === 0 ? 'var(--ink)' : 'var(--muted)',
                     whiteSpace: 'nowrap',
                   }}
@@ -101,7 +102,7 @@ export function ModelCard() {
 
   if (error) {
     return (
-      <p className="fg-surface px-4 py-3" role="alert" style={{ fontSize: 13, color: 'var(--hold)' }}>
+      <p className="nb-panel px-4 py-3" role="alert" style={{ fontSize: 13, color: 'var(--hold)' }}>
         {error}
       </p>
     );

@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 import { Icon } from './Icon';
+import { Badge, Button, Notice, Panel } from './ui';
+import { SPRING, pop, useReducedMotion } from '../motion';
 import type { RingDetail, RingSummary } from '../types';
 import { fetchRing, fetchRings, isAbortError } from '../services/opsApi';
 
@@ -49,6 +52,7 @@ function placeSenders(senders: string[]): Placed[] {
 }
 
 function RingCanvas({ ring, step }: { ring: RingDetail; step: number }) {
+  const reduced = useReducedMotion();
   const placed = useMemo(() => placeSenders(ring.senders), [ring.senders]);
   const byVpa = useMemo(
     () => new Map(placed.map((p) => [p.vpa, p])),
@@ -65,7 +69,6 @@ function RingCanvas({ ring, step }: { ring: RingDetail; step: number }) {
   const isHub = fanin >= HUB_FANIN;
   const collected = visible.reduce((sum, e) => sum + e.amount, 0);
 
-  const muleColour = isHub ? 'var(--node-mule)' : 'var(--muted)';
 
   return (
     <div className="flex flex-col items-center gap-3">
@@ -91,24 +94,27 @@ function RingCanvas({ ring, step }: { ring: RingDetail; step: number }) {
               y1={from.y}
               x2={CENTRE}
               y2={CENTRE}
-              stroke={newest ? muleColour : 'var(--edge)'}
-              strokeWidth={1 + (edge.amount / maxAmount) * 3.5}
+              stroke={newest ? 'var(--hold)' : 'var(--ink)'}
+              strokeWidth={1.5 + (edge.amount / maxAmount) * 4}
               strokeLinecap="round"
-              opacity={newest ? 0.95 : 0.55}
+              opacity={newest ? 1 : 0.4}
             />
           );
         })}
 
         {/* The collecting account. It grows with what it has taken, which is the
             visual the whole thing exists to deliver. */}
-        <circle
+        {/* The collecting account, growing with what it has taken. Animated on a
+            spring so it settles with weight instead of easing to a stop — the whole
+            point is that the ring *arrives*. */}
+        <motion.circle
           cx={CENTRE}
           cy={CENTRE}
-          r={26 + Math.min(fanin, 5) * 3.5}
-          fill={isHub ? 'var(--hold-soft)' : 'var(--sunk)'}
-          stroke={muleColour}
-          strokeWidth={isHub ? 2.4 : 1.6}
-          style={{ transition: 'all 260ms ease' }}
+          animate={{ r: 28 + Math.min(fanin, 5) * 4 }}
+          transition={reduced ? { duration: 0 } : SPRING}
+          fill={isHub ? 'var(--hold-fill)' : 'var(--sunk)'}
+          stroke="var(--ink)"
+          strokeWidth={3}
         />
         <text
           x={CENTRE}
@@ -118,7 +124,7 @@ function RingCanvas({ ring, step }: { ring: RingDetail; step: number }) {
             fontFamily: 'var(--font-mono)',
             fontSize: 15,
             fontWeight: 600,
-            fill: muleColour,
+            fill: isHub ? '#0b0b0b' : 'var(--ink)',
           }}
         >
           {fanin}
@@ -127,7 +133,13 @@ function RingCanvas({ ring, step }: { ring: RingDetail; step: number }) {
           x={CENTRE}
           y={CENTRE + 12}
           textAnchor="middle"
-          style={{ fontFamily: 'var(--font-mono)', fontSize: 8.5, fill: 'var(--faint)' }}
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: 8.5,
+            fontWeight: 700,
+            letterSpacing: '0.1em',
+            fill: isHub ? '#0b0b0b' : 'var(--faint)',
+          }}
         >
           FAN-IN
         </text>
@@ -136,14 +148,21 @@ function RingCanvas({ ring, step }: { ring: RingDetail; step: number }) {
         {placed.map((p) => {
           const paid = seen.has(p.vpa);
           return (
-            <g key={p.vpa} style={{ transition: 'opacity 200ms ease' }} opacity={paid ? 1 : 0.28}>
+            <motion.g
+              key={p.vpa}
+              variants={pop(!!reduced)}
+              initial={false}
+              animate={{ opacity: paid ? 1 : 0.3, scale: paid ? 1 : 0.88 }}
+              transition={reduced ? { duration: 0 } : SPRING}
+              style={{ transformOrigin: `${p.x}px ${p.y}px` }}
+            >
               <circle
                 cx={p.x}
                 cy={p.y}
-                r={13}
-                fill="var(--surface)"
-                stroke={paid ? 'var(--node-victim)' : 'var(--rule-strong)'}
-                strokeWidth={1.6}
+                r={14}
+                fill={paid ? 'var(--surface)' : 'var(--sunk)'}
+                stroke="var(--ink)"
+                strokeWidth={2.4}
               />
               <text
                 x={p.x}
@@ -161,13 +180,13 @@ function RingCanvas({ ring, step }: { ring: RingDetail; step: number }) {
               >
                 {shortVpa(p.vpa)}
               </text>
-            </g>
+            </motion.g>
           );
         })}
       </svg>
 
       <p
-        className="fg-mono text-center"
+        className="nb-mono text-center"
         style={{ fontSize: 12, color: isHub ? 'var(--hold)' : 'var(--muted)' }}
         aria-live="polite"
       >
@@ -239,25 +258,21 @@ export function RingGraph() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-5">
       {/* Incident list -------------------------------------------------- */}
-      <section className="fg-surface" style={{ padding: 0, overflow: 'hidden' }}>
-        <header className="px-4 py-3" style={{ borderBottom: '1px solid var(--rule)' }}>
-          <h2 style={{ fontSize: 13, fontWeight: 600 }}>Incidents</h2>
-          <p style={{ fontSize: 11.5, color: 'var(--muted)' }}>
-            Highest fan-in first
-          </p>
-        </header>
+      <Panel title="Incidents" subtitle="Highest fan-in first" padded={false}>
 
         {error && (
-          <p className="px-4 py-3" style={{ fontSize: 12, color: 'var(--hold)' }} role="alert">
-            {error}
-          </p>
+          <div style={{ padding: 14 }}>
+            <Notice tone="hold" icon="alert">
+              {error}
+            </Notice>
+          </div>
         )}
 
-        <ul style={{ maxHeight: 520, overflowY: 'auto' }}>
+        <ul style={{ maxHeight: 540, overflowY: 'auto' }}>
           {summaries.map((s) => {
             const selected = ring?.ring_id === s.ring_id;
             return (
-              <li key={s.ring_id} style={{ borderBottom: '1px solid var(--rule)' }}>
+              <li key={s.ring_id} style={{ borderBottom: '1px solid var(--edge)' }}>
                 <button
                   type="button"
                   onClick={() => void open(s.ring_id)}
@@ -270,17 +285,12 @@ export function RingGraph() {
                   }}
                 >
                   <div className="flex items-baseline justify-between gap-2">
-                    <span className="fg-mono" style={{ fontSize: 12, color: 'var(--ink)' }}>
+                    <span className="nb-mono" style={{ fontSize: 12, color: 'var(--ink)' }}>
                       {s.ring_id.replace('ring_', '')}
                     </span>
-                    <span
-                      className="fg-mono"
-                      style={{ fontSize: 11, color: 'var(--hold)' }}
-                    >
-                      {s.fanin} payers
-                    </span>
+                    <Badge tone="hold">{s.fanin} payers</Badge>
                   </div>
-                  <p className="fg-mono" style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  <p className="nb-mono" style={{ fontSize: 11, color: 'var(--muted)' }}>
                     {rupees(s.total_amount)} in {s.window_seconds}s
                   </p>
                 </button>
@@ -288,10 +298,10 @@ export function RingGraph() {
             );
           })}
         </ul>
-      </section>
+      </Panel>
 
       {/* The star ------------------------------------------------------- */}
-      <section className="fg-surface" style={{ padding: 20 }}>
+      <section className="nb-panel" style={{ padding: 22 }}>
         {!ring ? (
           <p style={{ fontSize: 13, color: 'var(--muted)', textAlign: 'center', padding: '80px 0' }}>
             Select an incident to replay it.
@@ -300,35 +310,32 @@ export function RingGraph() {
           <>
             <header className="flex flex-wrap items-start justify-between gap-3 mb-4">
               <div>
-                <h2 style={{ fontSize: 14, fontWeight: 600 }}>
+                <h2 className="nb-display" style={{ fontSize: 18 }}>
                   {ring.pattern.replace(/_/g, ' ')}
                 </h2>
-                <p className="fg-mono" style={{ fontSize: 11.5, color: 'var(--muted)' }}>
+                <p className="nb-mono" style={{ fontSize: 11.5, color: 'var(--muted)' }}>
                   {ring.receivers[0]} · receiver {ring.receiver_age_days} days old ·{' '}
                   {rupees(ring.total_amount)} over {ring.window_seconds}s
                 </p>
               </div>
 
               <div className="flex gap-2">
-                <button type="button" className="fg-btn" onClick={replay}>
-                  <Icon name="activity" size={14} />
+                <Button variant="primary" icon="activity" onClick={replay}>
                   Replay
-                </button>
-                <button
-                  type="button"
-                  className="fg-btn"
+                </Button>
+                <Button
                   onClick={() => setStep(ring.edges.length)}
                   disabled={step >= ring.edges.length}
                 >
                   Show all
-                </button>
+                </Button>
               </div>
             </header>
 
             <RingCanvas ring={ring} step={step} />
 
             {/* The transfer log, so the animation has something exact behind it. */}
-            <ol className="mt-5" style={{ borderTop: '1px solid var(--rule)' }}>
+            <ol className="mt-5" style={{ borderTop: '1px solid var(--edge)' }}>
               {ring.edges.map((edge, i) => {
                 const shown = i < step;
                 return (
@@ -336,19 +343,19 @@ export function RingGraph() {
                     key={`${edge.sender}-${i}`}
                     className="flex items-baseline justify-between gap-3 py-1.5"
                     style={{
-                      borderBottom: '1px solid var(--rule)',
+                      borderBottom: '1px solid var(--edge)',
                       opacity: shown ? 1 : 0.32,
                       fontSize: 12,
                     }}
                   >
-                    <span className="fg-mono" style={{ color: 'var(--faint)', width: 52 }}>
+                    <span className="nb-mono" style={{ color: 'var(--faint)', width: 52 }}>
                       +{edge.offset_seconds}s
                     </span>
-                    <span className="fg-mono truncate flex-1" style={{ color: 'var(--muted)' }}>
+                    <span className="nb-mono truncate flex-1" style={{ color: 'var(--muted)' }}>
                       {edge.sender}
                     </span>
                     <Icon name="arrow-right" size={13} />
-                    <span className="fg-mono" style={{ color: 'var(--ink)' }}>
+                    <span className="nb-mono" style={{ color: 'var(--ink)' }}>
                       {rupees(edge.amount)}
                     </span>
                   </li>

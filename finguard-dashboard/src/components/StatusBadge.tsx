@@ -57,7 +57,7 @@ export function StatusBadge({ action, costs }: StatusBadgeProps) {
         initial={{ scale: 0, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.4 }}
-        className="inline-flex items-center gap-2 px-3 py-1.5 text-[12px] font-semibold fg-mono"
+        className="inline-flex items-center gap-2 px-3 py-1.5 text-[12px] font-semibold nb-mono"
         style={{
           color: style.tone,
           background: style.soft,
@@ -77,7 +77,7 @@ export function StatusBadge({ action, costs }: StatusBadgeProps) {
       <p className="text-[11.5px]" style={{ color: 'var(--muted)' }}>{style.hint}</p>
 
       {ranked.length > 0 && (
-        <dl className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-[11px] fg-mono" style={{ color: 'var(--faint)' }}>
+        <dl className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-[11px] nb-mono" style={{ color: 'var(--faint)' }}>
           {ranked.map(([name, value]) => (
             <div key={name} className="flex items-center gap-1">
               <dt style={{ color: name === action ? 'var(--ink)' : undefined, fontWeight: name === action ? 600 : 400 }}>

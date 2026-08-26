@@ -3,8 +3,9 @@ import type { SVGProps } from 'react';
 /**
  * The icon set.
  *
- * Hand-drawn on a 24-unit grid with a 1.6 stroke, round caps and round joins, so every
- * glyph shares a weight and a rhythm. Consistency is the whole reason this is one file
+ * Hand-drawn on a 24-unit grid with a 2px stroke, round caps and round joins, so every
+ * glyph shares a weight and a rhythm — and so they sit beside 2px brutalist borders
+ * without looking spindly next to them. Consistency is the whole reason this is one file
  * rather than icons pasted in as needed — a set assembled from three libraries reads as
  * three sets, and that is one of the things that makes an interface look thrown
  * together.
@@ -144,7 +145,7 @@ export function Icon({ name, size = 18, title, ...rest }: IconProps) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.6}
+      strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
       // Decorative unless given a title. Announcing every icon beside its own label

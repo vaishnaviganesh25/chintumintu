@@ -16,7 +16,7 @@ interface ApiStatusProps {
  * the reader to guess which of the two processes died.
  */
 export function ApiStatus({ health, checked }: ApiStatusProps) {
-  const base = 'inline-flex items-center gap-2 fg-mono';
+  const base = 'inline-flex items-center gap-2 nb-mono';
   const dot = (tone: string, pulse = false) => (
     <span
       style={{

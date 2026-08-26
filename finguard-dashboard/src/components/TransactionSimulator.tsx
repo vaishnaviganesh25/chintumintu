@@ -20,12 +20,8 @@ interface TransactionSimulatorProps {
   isLoading: boolean;
 }
 
-const FIELD_CLASS =
-  'w-full px-3 py-2 bg-[var(--sunk)] border border-[var(--rule-strong)] rounded-md text-[var(--ink)] ' +
-  ' focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:border-[var(--accent)] ' +
-  'disabled:opacity-60';
-
-const LABEL_CLASS = 'block text-sm font-medium text-[var(--ink)] mb-2';
+const FIELD_CLASS = 'nb-input';
+const LABEL_CLASS = 'nb-label block';
 
 export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimulatorProps) {
   const [formData, setFormData] = useState<FormValues>(EMPTY_FORM);
@@ -112,8 +108,8 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
     ) : null;
 
   return (
-    <div className="fg-surface p-5">
-      <h2 className="text-[13px] font-semibold mb-1">Transaction Simulator</h2>
+    <div className="nb-panel" style={{ padding: 20 }}>
+      <h2 className="nb-display" style={{ fontSize: 17, marginBottom: 3 }}>Transaction Simulator</h2>
       <p className="text-sm text-[var(--muted)] mb-5">
         Score a payment against the live model, or replay one of the scam signatures it
         was trained to catch.
@@ -121,7 +117,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
 
       {/* Scenario presets ------------------------------------------------ */}
       <fieldset className="mb-6" disabled={isLoading}>
-        <legend className="text-xs uppercase tracking-wider text-[var(--faint)] mb-2">
+        <legend className="nb-label" style={{ marginBottom: 8 }}>
           Replay a signature
         </legend>
         <div className="flex flex-wrap gap-2">
@@ -132,13 +128,11 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
               onClick={() => void runScenario(scenario)}
               disabled={isLoading}
               title={scenario.blurb}
-              className={
-                'px-3 py-1.5 rounded-md text-sm border transition-colors duration-150 ' +
-                'focus:outline-none focus:ring-2 focus:ring-[var(--accent)] disabled:opacity-50 ' +
-                'disabled:cursor-not-allowed ' +
-                (scenario.hostile
-                  ? 'border-[var(--hold)] text-[var(--hold)] hover:bg-[var(--hold-soft)]'
-                  : 'border-[var(--rule-strong)] bg-[var(--sunk)] text-[var(--ink)] hover:bg-[var(--sunk)]')
+              className="nb-btn"
+              style={
+                scenario.hostile
+                  ? { background: 'var(--hold-fill)', color: '#0b0b0b' }
+                  : undefined
               }
             >
               {scenario.label}
@@ -154,7 +148,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className={LABEL_CLASS} htmlFor="senderVPA">Sender VPA</label>
+          <label style={{ marginBottom: 5 }} className={LABEL_CLASS} htmlFor="senderVPA">Sender VPA</label>
           <input
             id="senderVPA"
             type="text"
@@ -169,7 +163,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
         </div>
 
         <div>
-          <label className={LABEL_CLASS} htmlFor="receiverVPA">Receiver VPA</label>
+          <label style={{ marginBottom: 5 }} className={LABEL_CLASS} htmlFor="receiverVPA">Receiver VPA</label>
           <input
             id="receiverVPA"
             type="text"
@@ -185,7 +179,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className={LABEL_CLASS} htmlFor="amount">Amount (INR)</label>
+            <label style={{ marginBottom: 5 }} className={LABEL_CLASS} htmlFor="amount">Amount (INR)</label>
             <input
               id="amount"
               type="number"
@@ -202,7 +196,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
           </div>
 
           <div>
-            <label className={LABEL_CLASS} htmlFor="receiverVpaAgeDays">
+            <label style={{ marginBottom: 5 }} className={LABEL_CLASS} htmlFor="receiverVpaAgeDays">
               Receiver VPA age (days)
               <span className="text-[var(--faint)] font-normal"> &mdash; optional</span>
             </label>
@@ -233,7 +227,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
         </div>
 
         <div>
-          <label className={LABEL_CLASS} htmlFor="timestamp">
+          <label style={{ marginBottom: 5 }} className={LABEL_CLASS} htmlFor="timestamp">
             Transaction time
             <span className="text-[var(--faint)] font-normal"> &mdash; optional</span>
           </label>
@@ -270,7 +264,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
           {showAdvanced && (
             <div id="advanced-fields" className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
               <div>
-                <label className={LABEL_CLASS} htmlFor="senderCity">Sender city</label>
+                <label style={{ marginBottom: 5 }} className={LABEL_CLASS} htmlFor="senderCity">Sender city</label>
                 <input
                   id="senderCity"
                   type="text"
@@ -284,7 +278,7 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
               </div>
 
               <div>
-                <label className={LABEL_CLASS} htmlFor="timeSinceLastTxnSec">
+                <label style={{ marginBottom: 5 }} className={LABEL_CLASS} htmlFor="timeSinceLastTxnSec">
                   Seconds since last payment
                 </label>
                 <input

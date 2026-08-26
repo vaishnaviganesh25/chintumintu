@@ -25,7 +25,7 @@ export function LatencyMetric({ executionTimeMs }: LatencyMetricProps) {
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: 0.2, duration: 0.35 }}
-      className="inline-flex items-center gap-1.5 fg-mono"
+      className="inline-flex items-center gap-1.5 nb-mono"
       style={{
         fontSize: 11.5,
         color: tone,

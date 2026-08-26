@@ -77,10 +77,10 @@ export function SHAPChart({ features }: SHAPChartProps) {
     const { name, importance } = payload[0].payload;
     const towardsFraud = importance > 0;
     return (
-      <div className="fg-surface p-3 max-w-xs" style={{ boxShadow: 'var(--shadow-md)' }}>
+      <div className="nb-panel p-3 max-w-xs" style={{ boxShadow: 'var(--shadow-hard)' }}>
         <p className="text-[13px] font-medium">{name}</p>
         <p
-          className="fg-mono font-semibold"
+          className="nb-mono font-semibold"
           style={{ color: towardsFraud ? riskColour : safeColour }}
         >
           {importance > 0 ? '+' : ''}
@@ -106,8 +106,8 @@ export function SHAPChart({ features }: SHAPChartProps) {
               type="number"
               domain={[-bound, bound]}
               tick={{ fill: 'var(--faint)', fontSize: 10 }}
-              axisLine={{ stroke: 'var(--rule)' }}
-              tickLine={{ stroke: 'var(--rule)' }}
+              axisLine={{ stroke: 'var(--edge)' }}
+              tickLine={{ stroke: 'var(--edge)' }}
               tickFormatter={(value: number) => value.toFixed(2)}
             />
             <YAxis
@@ -115,11 +115,11 @@ export function SHAPChart({ features }: SHAPChartProps) {
               dataKey="label"
               width={190}
               tick={{ fill: 'var(--faint)', fontSize: 10 }}
-              axisLine={{ stroke: 'var(--rule)' }}
+              axisLine={{ stroke: 'var(--edge)' }}
               tickLine={false}
             />
             <Tooltip content={customTooltip} cursor={{ fill: 'var(--accent-soft)' }} />
-            <ReferenceLine x={0} stroke="var(--rule-strong)" strokeWidth={1} />
+            <ReferenceLine x={0} stroke="var(--edge)" strokeWidth={1} />
             <Bar dataKey="importance" radius={[2, 2, 2, 2]} isAnimationActive={false}>
               {chartData.map((entry) => (
                 <Cell

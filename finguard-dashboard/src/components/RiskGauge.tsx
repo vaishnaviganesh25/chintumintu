@@ -42,7 +42,7 @@ export function RiskGauge({ probability, action, threshold }: RiskGaugeProps) {
             stroke="currentColor"
             strokeWidth="8"
             fill="transparent"
-            style={{ color: 'var(--rule)' }}
+            style={{ color: 'var(--edge)' }}
           />
           <motion.circle
             cx="50"
@@ -61,7 +61,7 @@ export function RiskGauge({ probability, action, threshold }: RiskGaugeProps) {
 
         <div className="absolute inset-0 flex items-center justify-center">
           <motion.span
-            className="text-2xl font-semibold fg-mono"
+            className="text-2xl font-semibold nb-mono"
             style={{ color: tone }}
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
@@ -72,9 +72,9 @@ export function RiskGauge({ probability, action, threshold }: RiskGaugeProps) {
         </div>
       </div>
 
-      <p className="fg-label mt-2">Fraud risk</p>
+      <p className="nb-label mt-2">Fraud risk</p>
       {typeof threshold === 'number' && (
-        <p className="fg-mono text-[11px] mt-0.5" style={{ color: 'var(--faint)' }}>
+        <p className="nb-mono text-[11px] mt-0.5" style={{ color: 'var(--faint)' }}>
           blocks at {(threshold * 100).toFixed(1)}%
         </p>
       )}
