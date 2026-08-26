@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icon';
 import type { RingDetail, RingSummary } from '../types';
-import { fetchRing, fetchRings } from '../services/opsApi';
+import { fetchRing, fetchRings, isAbortError } from '../services/opsApi';
 
 /**
  * A mule ring, drawn as the star it is.
@@ -194,7 +194,10 @@ export function RingGraph() {
         setSummaries(rows);
         if (rows.length) void open(rows[0].ring_id);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load incidents.'));
+      .catch((err) => {
+        if (isAbortError(err)) return;
+        setError(err instanceof Error ? err.message : 'Could not load incidents.');
+      });
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -211,6 +214,7 @@ export function RingGraph() {
       setStep(reduced ? detail.edges.length : 0);
       setPlaying(!reduced);
     } catch (err) {
+      if (isAbortError(err)) return;
       setError(err instanceof Error ? err.message : 'Could not load that incident.');
     }
   };

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { fetchModelCard } from '../services/opsApi';
+import { fetchModelCard, isAbortError } from '../services/opsApi';
 
 /**
  * The model's own record, served straight from `model_config.json`.
@@ -91,7 +91,11 @@ export function ModelCard() {
     const controller = new AbortController();
     fetchModelCard(controller.signal)
       .then(setCard)
-      .catch((err) => setError(err instanceof Error ? err.message : 'Could not load the card.'));
+      .catch((err) => {
+        // A request we cancelled ourselves is not a failure to report.
+        if (isAbortError(err)) return;
+        setError(err instanceof Error ? err.message : 'Could not load the card.');
+      });
     return () => controller.abort();
   }, []);
 

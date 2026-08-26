@@ -9,6 +9,7 @@ import type {
 import {
   fetchDecision,
   fetchQueue,
+  isAbortError,
   fetchStats,
   raiseDispute,
   recordDisposition,
@@ -356,7 +357,7 @@ export function OpsConsole() {
       setStats(summary);
       setError(null);
     } catch (err) {
-      if (signal?.aborted) return;
+      if (signal?.aborted || isAbortError(err)) return;
       setError(err instanceof Error ? err.message : 'Could not load the queue.');
     } finally {
       if (!signal?.aborted) setLoaded(true);

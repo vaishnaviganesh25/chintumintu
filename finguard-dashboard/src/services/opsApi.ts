@@ -18,6 +18,28 @@ import { API_BASE_URL, FraudApiError } from './fraudApi';
  * different file.
  */
 
+/**
+ * Was this rejection a cancellation we asked for?
+ *
+ * React 19's StrictMode mounts an effect, tears it down, and mounts it again. The
+ * teardown aborts any request the first mount started, so a component that treats
+ * every rejection as a failure paints "signal is aborted without reason" over itself
+ * on load. The same thing happens in production whenever someone switches view before
+ * a request settles - the dev double-mount just makes it happen every single time.
+ *
+ * Exported rather than left to each caller to remember, because relying on that is
+ * exactly how the two newest views ended up with the bug while the older ones did not.
+ */
+export function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === 'AbortError') return true;
+  // Some runtimes reject with a plain Error rather than a DOMException, and the
+  // message is the only thing that distinguishes it.
+  return (
+    error instanceof Error &&
+    (error.name === 'AbortError' || /aborted/i.test(error.message))
+  );
+}
+
 const OPS_TIMEOUT_MS = 10_000;
 // Drafting a representment packet calls a language model, which is slower than
 // anything else in the product by an order of magnitude.
