@@ -67,18 +67,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from audit_store import VALID_OUTCOMES, store as audit
+import network_signals
+from audit_store import VALID_OUTCOMES
+from audit_store import store as audit
 from chargeback_agent import available_provider, respond_to_dispute
 from degradation import Rung, fallback_verdict
-from graph_features import describe_ring
-import network_signals
-from razorpay_client import client as razorpay
-from merchant_policy import DEFAULT as MERCHANT, merchant_advice
 from explain_model import (
     build_explainer,
     explain_transaction,
     load_model_and_config,
 )
+from graph_features import describe_ring
+from merchant_policy import DEFAULT as MERCHANT
+from merchant_policy import merchant_advice
+from razorpay_client import client as razorpay
 from train_model import engineer_features
 
 # --------------------------------------------------------------------------- #
@@ -89,7 +91,9 @@ BASE_DIR = Path(__file__).resolve().parent
 # Configurable, because 8080 is a popular port and a hardcoded one turns "something
 # else is already listening" into a stack trace at startup. FINGUARD_PORT=0 asks the
 # OS for a free port, which is what the tests use.
-HOST = os.environ.get("FINGUARD_HOST", "0.0.0.0")
+# Binding every interface is the point inside a container; loopback would make the
+# service unreachable from outside it. Override with FINGUARD_HOST on a bare host.
+HOST = os.environ.get("FINGUARD_HOST", "0.0.0.0")  # noqa: S104  # nosec B104
 PORT = int(os.environ.get("FINGUARD_PORT", "8080"))
 
 # The Vite dev server. Both spellings of the host are listed because a browser sends
@@ -558,7 +562,7 @@ class FraudEngine:
             self.history.record(raw_frame.loc[current].to_dict())
 
         txn_id = req.transaction_id or f"tx-{uuid.uuid4().hex[:12]}"
-        elapsed_ms = int(round((time.perf_counter() - elapsed_from) * 1000))
+        elapsed_ms = round((time.perf_counter() - elapsed_from) * 1000)
         log.info("%s  %s -> %s  Rs.%s  %s  [%s]  (%d ms)",
                  txn_id, req.sender_vpa, req.receiver_vpa, f"{req.amount:,.2f}",
                  verdict.action, verdict.rung.name, elapsed_ms)
@@ -615,7 +619,7 @@ class FraudEngine:
                     self.explainer, self.pipeline, self.names,
                     features, raw_frame.loc[current], self.threshold,
                 )
-        except Exception as exc:                      # noqa: BLE001
+        except Exception as exc:
             log.error("Full scoring unavailable (%s); descending the ladder.", exc)
             return self._fallback_response(req, ts, raw_frame, current, elapsed_from=start,
                                            remember=remember, persist=persist)
@@ -649,7 +653,7 @@ class FraudEngine:
             self.history.record(raw_frame.loc[current].to_dict())
 
         txn_id = req.transaction_id or f"tx-{uuid.uuid4().hex[:12]}"
-        elapsed_ms = int(round((time.perf_counter() - start) * 1000))
+        elapsed_ms = round((time.perf_counter() - start) * 1000)
         log.info("%s  %s -> %s  Rs.%s  p=%.4f  %s  (%d ms)",
                  txn_id, req.sender_vpa, req.receiver_vpa, f"{req.amount:,.2f}",
                  probability, action, elapsed_ms)
@@ -782,14 +786,14 @@ engine = FraudEngine()
 # Application
 # --------------------------------------------------------------------------- #
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     # The ledger is opened before the model: if scoring works, every decision it
     # produces must be recordable. A ledger failure is downgraded to a warning rather
     # than a startup abort, for the same reason writes are - bookkeeping must never
     # be the thing that stops a fraud engine from detecting fraud.
     try:
         audit.connect()
-    except Exception as exc:                          # noqa: BLE001
+    except Exception as exc:
         log.error("Audit ledger unavailable, scoring will continue unrecorded: %s", exc)
 
     log.info("Loading FinGuard artifacts from %s ...", BASE_DIR / "models")
@@ -832,7 +836,9 @@ def require_engine() -> FraudEngine:
 
 
 @app.exception_handler(Exception)
-async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+# `exc` is unused because `log.exception` reads the active exception from context;
+# the parameter stays because Starlette calls handlers with both positionally.
+async def unhandled_error(request: Request, _exc: Exception) -> JSONResponse:
     log.exception("Unhandled error on %s", request.url.path)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -866,7 +872,7 @@ def _ledger_state() -> tuple[str, int]:
         return "unavailable", 0
     try:
         return ("degraded" if audit.degraded else "ok"), audit.stats()["decisions_recorded"]
-    except Exception:                                 # noqa: BLE001
+    except Exception:
         return "degraded", 0
 
 
@@ -1124,9 +1130,12 @@ if __name__ == "__main__":
     def _port_is_free(host: str, port: int) -> bool:
         if port == 0:
             return True
+        # 0.0.0.0 means "every interface" and is not itself connectable, so the
+        # probe goes to loopback in that case and to the named host otherwise.
+        target = "127.0.0.1" if host in ("0.0.0.0", "", "::") else host  # noqa: S104  # nosec B104
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
             probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            return probe.connect_ex(("127.0.0.1", port)) != 0
+            return probe.connect_ex((target, port)) != 0
 
     if not _port_is_free(HOST, PORT):
         # Checked before uvicorn binds, so the message names the fix rather than

@@ -8,7 +8,7 @@ escalation nobody can appeal is worse than a fraud nobody caught.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -20,7 +20,7 @@ from network_signals import (
     lookup,
 )
 
-NOW = datetime(2026, 8, 23, 14, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 23, 14, 0, tzinfo=UTC)
 
 
 def _decision(store, sender="payer@ybl", receiver="shop@paytm", decision="HOLD",

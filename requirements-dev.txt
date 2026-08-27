@@ -16,3 +16,10 @@ pytest>=8.0
 hypothesis>=6.100
 # FastAPI's TestClient is a thin wrapper over httpx and will not import without it.
 httpx>=0.27
+
+# Lint and security, run in CI and configured in pyproject.toml. Pinned by lower bound
+# only: a newer ruff finding something new is a result worth seeing, not a broken build
+# to avoid.
+ruff>=0.15
+bandit>=1.8
+pip-audit>=2.7

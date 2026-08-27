@@ -29,7 +29,7 @@ SEED = 42
 
 N_TRANSACTIONS = 100_000
 FRAUD_RATE = 0.005                      # 0.5% -> 500 fraudulent rows
-N_FRAUD = int(round(N_TRANSACTIONS * FRAUD_RATE))
+N_FRAUD = round(N_TRANSACTIONS * FRAUD_RATE)
 N_LEGIT = N_TRANSACTIONS - N_FRAUD
 
 N_SENDERS = 5_000                       # customer population
@@ -463,7 +463,7 @@ def generate_legitimate(
     senders: pd.DataFrame, receivers: pd.DataFrame, adopters: pd.DataFrame, rng: np.random.Generator
 ) -> pd.DataFrame:
     """All 99,500 non-fraud rows: established-receiver traffic plus new-adopter traffic."""
-    n_adopter = int(round(N_LEGIT * NEW_ADOPTER_TXN_SHARE))
+    n_adopter = round(N_LEGIT * NEW_ADOPTER_TXN_SHARE)
     n_established = N_LEGIT - n_adopter
 
     established = _generate_established_traffic(senders, receivers, n_established, rng)
@@ -569,7 +569,7 @@ def generate_rupee_one_test(
 
         # The "massive" leg: Rs.10,000+, skewed towards the round figures a victim
         # would be instructed to send, and capped by the Rs.1 lakh UPI P2P limit.
-        if rng.random() < 0.65:
+        if rng.random() < 0.65:  # noqa: SIM108 - the branches carry separate comments
             big = float(rng.integers(20, 200) * 500)      # Rs.10,000 - Rs.99,500
         else:
             big = float(rng.integers(10_000, 100_000))
@@ -613,7 +613,7 @@ def generate_new_vpa_velocity(
         random.shuffle(transfers_per_victim)
         offset = 0
 
-        for victim_idx, n_transfers in zip(victims, transfers_per_victim):
+        for victim_idx, n_transfers in zip(victims, transfers_per_victim, strict=True):
             sender = senders.at[int(victim_idx), "vpa"]
             city = senders.at[int(victim_idx), "city"]
             offset += int(rng.integers(20, 150))          # next victim joins the burst
@@ -849,7 +849,13 @@ def report(df: pd.DataFrame) -> None:
 
 
 def main() -> None:
-    assert N_ODD_HOUR > 0, "Fraud budget over-allocated: reduce the pair/burst counts."
+    # A raise rather than an assert: under `python -O` the budget check would vanish
+    # and the generator would emit a silently malformed dataset.
+    if N_ODD_HOUR <= 0:
+        raise ValueError(
+            f"Fraud budget over-allocated (N_ODD_HOUR={N_ODD_HOUR}): "
+            "reduce the pair/burst counts."
+        )
 
     random.seed(SEED)
     Faker.seed(SEED)

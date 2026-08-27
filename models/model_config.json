@@ -1,7 +1,7 @@
 {
   "project": "FinGuard - UPI fraud detection",
   "module": "2 - predictive ML engine",
-  "created_at": "2026-08-27T11:03:27+00:00",
+  "created_at": "2026-08-27T22:03:42+00:00",
   "best_model": "RandomForest",
   "model_file": "finguard_random_forest.joblib",
   "preprocessor_file": "preprocessor.joblib",
@@ -64,7 +64,9 @@
     "period_end": "2026-08-09 23:55:54"
   },
   "split": {
-    "strategy": "stratified 64/16/20 train/validation/test",
+    "strategy": "group-aware 64/16/20 train/validation/test, grouped on `ring_id`",
+    "group_aware": true,
+    "grouped_on": "ring_id",
     "train_rows": 64000,
     "validation_rows": 16000,
     "test_rows": 20000,

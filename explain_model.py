@@ -423,7 +423,7 @@ def explain_transaction(explainer, pipeline, names, features: pd.DataFrame,
     }
 
 
-def plot_waterfall(explainer, result: dict, names: list[str], features: pd.DataFrame,
+def plot_waterfall(explainer, result: dict, features: pd.DataFrame,
                    idx, title: str, path: Path) -> None:
     """Per-transaction waterfall from the base rate to the final score.
 
@@ -547,7 +547,7 @@ def main() -> None:
                 say(f"      - {m}")
 
         slug = signature.replace(" ", "_").replace("(", "").replace(")", "")
-        plot_waterfall(explainer, result, names, features, idx,
+        plot_waterfall(explainer, result, features, idx,
                        f"{signature} - p(fraud) = {result['probability']:.3f}",
                        EXPLAIN_DIR / f"waterfall_{slug}.png")
         case_records.append({
@@ -584,7 +584,7 @@ def main() -> None:
         say("    payment, and a human reviewing it would reach for the same evidence.")
         say("    That is the point - a wrong alert you can interrogate is cleared in")
         say("    seconds, while an unexplained score has to be taken on faith.")
-        plot_waterfall(explainer, result, names, features, idx,
+        plot_waterfall(explainer, result, features, idx,
                        f"False positive - p(fraud) = {result['probability']:.3f}",
                        EXPLAIN_DIR / "waterfall_false_positive.png")
         case_records.append({

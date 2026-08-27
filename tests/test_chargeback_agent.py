@@ -19,7 +19,7 @@ import pytest
 import chargeback_agent as agent
 from chargeback_agent import (
     REASON_CODES,
-    ProviderUnavailable,
+    ProviderUnavailableError,
     RepresentmentPacket,
     available_provider,
     build_case_file,
@@ -191,7 +191,7 @@ def test_google_api_key_is_accepted_as_well_as_gemini_api_key(monkeypatch):
 @pytest.mark.parametrize(
     ("raised", "expected_marker"),
     [
-        (ProviderUnavailable("SDK not installed"), "SDK not installed"),
+        (ProviderUnavailableError("SDK not installed"), "SDK not installed"),
         (TimeoutError("timed out"), "TimeoutError"),
         (ConnectionError("unreachable"), "ConnectionError"),
         (RuntimeError("rate limited"), "RuntimeError"),
@@ -220,7 +220,7 @@ def test_a_provider_refusal_falls_back_rather_than_returning_nothing(case, monke
     monkeypatch.setenv("GEMINI_API_KEY", "gm-test")
 
     with patch.object(agent, "_gemini",
-                      side_effect=ProviderUnavailable("model declined the request")):
+                      side_effect=ProviderUnavailableError("model declined the request")):
         packet = draft_representment(case_file)
 
     assert packet.degraded is True

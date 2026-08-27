@@ -7,7 +7,7 @@ arithmetic, so both are testable.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 
 import numpy as np
 import pytest
@@ -16,11 +16,10 @@ from hypothesis import strategies as st
 
 from merchant_policy import (
     DEFAULT,
+    DISPUTE_RATIO_CEILING,
     MerchantEconomics,
-    binary_portfolio_cost,
     portfolio_cost,
     prevalence_at_which_covenant_binds,
-    DISPUTE_RATIO_CEILING,
 )
 from train_model import cost_optimal_threshold, expected_cost_at
 
@@ -381,7 +380,7 @@ def test_economics_are_frozen_so_a_policy_cannot_drift_mid_run():
     produced. If a caller could mutate them in place, that record would silently stop
     describing the model that shipped.
     """
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         DEFAULT.chargeback_fee = 9_999.0
 
     assert isinstance(replace(DEFAULT, chargeback_fee=9_999.0), MerchantEconomics)

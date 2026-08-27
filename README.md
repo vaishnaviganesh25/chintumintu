@@ -34,7 +34,7 @@ docker compose up --build      # dashboard :5173  ·  API docs :8080/docs
 | **Graph layer** | Fan-in and decayed collection velocity recover **60%** of the ground lost by dropping account age — PR-AUC 0.8788 → 0.9506 |
 | **Honesty** | Grouping the split *cost* headline performance, and it stayed grouped. Every feature block has an ablation in the run report |
 | **Resilience** | Four rungs of degradation — kill the model and it still scores, marks itself `degraded`, and never fabricates a probability |
-| **Tested** | **277** Python + **74** TypeScript, including property-based tests and a packaging guard |
+| **Tested** | **279** Python + **74** TypeScript, including property-based tests and a packaging guard |
 
 ## How it fits together
 
@@ -90,6 +90,7 @@ with the evidence that was actually used.
 | — | Merchant economics | `merchant_policy.py` | the cost model every decision is priced in |
 | — | Dashboard | `finguard-dashboard/` | React + Vite console on `:5173` |
 | — | Serving check | `predict_example.py` | proves the saved artifacts round-trip |
+| — | Claims check | `verify_claims.py` | re-derives every number below from the artifacts |
 
 ## Getting started
 
@@ -111,15 +112,32 @@ npm install
 npm run dev                       # console on http://localhost:5173
 ```
 
-### Tests
+### Checks
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                            # 277 tests
-pytest -m "not slow"              # 240 of them, no model artifacts needed
+pytest                            # 279 tests
+pytest -m "not slow"              # 242 of them, no model artifacts needed
+ruff check .                      # lint; configured in pyproject.toml
+python verify_claims.py           # every number below, re-derived from the artifacts
+python -m bandit -q -r . -x ./finguard-dashboard,./tests
+python -m pip_audit -r requirements.txt
 
 cd finguard-dashboard && npm run test:run    # 74 tests
 ```
+
+`verify_claims.py` is the unusual one. Every headline figure in this file is re-derived
+from `models/model_config.json` and `reports/evaluation_report.txt` and compared against
+the prose; a mismatch fails CI. It exists because this README once cited a 0.9% dispute
+ceiling for a card-network programme that had been retired for a year, quoted three
+different test counts on one screen, and reported model metrics from two feature sets
+ago. None of that was dishonest and all of it was wrong, which is the failure mode
+documentation actually has.
+
+[`AGENTS.md`](AGENTS.md) is the short structural tour, for agents and for anyone who
+wants the map before the essay. [`SECURITY.md`](SECURITY.md) covers what is scanned,
+what is deliberately suppressed and why, and — more usefully — the threat model this
+project does *not* cover.
 
 > [!WARNING]
 > **The dependency bounds in `requirements.txt` are load-bearing.** SHAP needs numba,
@@ -1265,8 +1283,8 @@ leg 1 clear and leg 2 get held citing *gap since the sender's previous payment* 
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # 277 tests
-pytest -m "not slow"       # 240 of them; the rest need models/ on disk
+pytest                     # 279 tests
+pytest -m "not slow"       # 242 of them; the rest need models/ on disk
 cd finguard-dashboard && npm run test:run    # 74 tests
 ```
 

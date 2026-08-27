@@ -40,7 +40,7 @@ import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -135,7 +135,7 @@ def _utc_now() -> str:
     # same second routinely (a reviewer correcting themselves), and a second-resolution
     # timestamp makes "which came last" unanswerable from the value alone. Ordering
     # still breaks the tie on rowid, but the stored value should not be misleading.
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+    return datetime.now(UTC).isoformat(timespec="microseconds")
 
 
 class AuditStore:
@@ -248,7 +248,7 @@ class AuditStore:
                     ),
                 )
             return decision_id
-        except Exception as exc:                      # noqa: BLE001 - deliberate catch-all
+        except Exception as exc:
             self.degraded = True
             self.last_error = f"{type(exc).__name__}: {exc}"
             log.error("Audit write failed for %s (scoring unaffected): %s", transaction_id, exc)
@@ -378,6 +378,32 @@ class AuditStore:
     # rewrite its own history to match a later schema.
     ACCEPTED_DECISIONS = ("ACCEPT", "APPROVED")
 
+    # The queue projection, written out twice so neither is assembled at runtime. The
+    # only difference is the WHERE clause; `test_the_two_queue_queries_differ_only_by_
+    # their_filter` holds them in step, and the placeholder count is checked against
+    # ACCEPTED_DECISIONS below.
+    _RECENT_ALL = """
+                SELECT d.*, (
+                    SELECT p.outcome FROM dispositions p
+                    WHERE p.decision_id = d.decision_id
+                    ORDER BY p.recorded_at DESC, p.rowid DESC LIMIT 1
+                ) AS latest_disposition
+                FROM decisions d
+                ORDER BY d.scored_at DESC, d.rowid DESC
+                LIMIT ? OFFSET ?
+                """
+    _RECENT_ACTIONED = """
+                SELECT d.*, (
+                    SELECT p.outcome FROM dispositions p
+                    WHERE p.decision_id = d.decision_id
+                    ORDER BY p.recorded_at DESC, p.rowid DESC LIMIT 1
+                ) AS latest_disposition
+                FROM decisions d
+                WHERE d.decision NOT IN (?,?)
+                ORDER BY d.scored_at DESC, d.rowid DESC
+                LIMIT ? OFFSET ?
+                """
+
     def recent_decisions(
         self, limit: int = 50, offset: int = 0, only_actioned: bool = False,
     ) -> list[dict[str, Any]]:
@@ -393,23 +419,16 @@ class AuditStore:
         issued one extra query per entry would be the classic N+1, and this endpoint
         exists to be polled.
         """
-        placeholders = ",".join("?" * len(self.ACCEPTED_DECISIONS))
-        clause = f"WHERE d.decision NOT IN ({placeholders})" if only_actioned else ""
+        # Two complete literal queries rather than one built by interpolation. The
+        # interpolated version was provably safe - only a generated run of `?` and a
+        # constant clause were ever substituted - but "provably safe dynamic SQL" in the
+        # audit ledger is a thing a reader has to verify line by line, and a scanner
+        # cannot verify at all. These two need no argument.
+        query = self._RECENT_ACTIONED if only_actioned else self._RECENT_ALL
         params: tuple[Any, ...] = self.ACCEPTED_DECISIONS if only_actioned else ()
         with self._cursor() as cur:
             rows = cur.execute(
-                f"""
-                SELECT d.*, (
-                    SELECT p.outcome FROM dispositions p
-                    WHERE p.decision_id = d.decision_id
-                    ORDER BY p.recorded_at DESC, p.rowid DESC LIMIT 1
-                ) AS latest_disposition
-                FROM decisions d
-                {clause}
-                ORDER BY d.scored_at DESC, d.rowid DESC
-                LIMIT ? OFFSET ?
-                """,
-                (*params, max(1, min(limit, 500)), max(0, offset)),
+                query, (*params, max(1, min(limit, 500)), max(0, offset)),
             ).fetchall()
         return [self._hydrate(r) for r in rows]
 

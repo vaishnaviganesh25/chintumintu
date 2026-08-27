@@ -55,12 +55,13 @@ import json
 import logging
 import os
 import textwrap
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-from audit_store import AuditStore, store as default_store
+from audit_store import AuditStore
+from audit_store import store as default_store
 from razorpay_client import (
     REASON_DESCRIPTIONS,
     DisputeEntity,
@@ -334,6 +335,7 @@ def deterministic_packet(case_file: dict[str, Any], why: str) -> RepresentmentPa
             "and the record supports that assessment."
         )
 
+    factors = '; '.join(case_file['explanation']['reasons_given_at_the_time']) or 'none recorded'
     argument = textwrap.dedent(f"""\
         Payment of Rs.{payment['amount_inr']:,.2f} from {payment['sender_vpa']} to
         {payment['receiver_vpa']} on {payment['timestamp']}.
@@ -345,7 +347,7 @@ def deterministic_packet(case_file: dict[str, Any], why: str) -> RepresentmentPa
         policy. The resulting action was {engine['action']}. The receiving account was
         {payment['receiver_vpa_age_days']} days old at the time.
 
-        Factors recorded at decision time: {'; '.join(case_file['explanation']['reasons_given_at_the_time']) or 'none recorded'}.
+        Factors recorded at decision time: {factors}.
     """).strip()
 
     return RepresentmentPacket(
@@ -378,7 +380,7 @@ def deterministic_packet(case_file: dict[str, Any], why: str) -> RepresentmentPa
 PACKET_SCHEMA = RepresentmentPacket.model_json_schema()
 
 
-class ProviderUnavailable(RuntimeError):
+class ProviderUnavailableError(RuntimeError):
     """Raised by an adapter when it cannot produce a packet. Always caught."""
 
 
@@ -394,7 +396,7 @@ def _gemini(system_prompt: str, user_prompt: str, schema: dict) -> dict:
     try:
         from google import genai
     except ImportError as exc:
-        raise ProviderUnavailable("google-genai SDK not installed") from exc
+        raise ProviderUnavailableError("google-genai SDK not installed") from exc
 
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     client = genai.Client(api_key=api_key)
@@ -416,10 +418,10 @@ def _gemini(system_prompt: str, user_prompt: str, schema: dict) -> dict:
         )
         text = response.text
     else:
-        raise ProviderUnavailable("google-genai client exposes no known generate surface")
+        raise ProviderUnavailableError("google-genai client exposes no known generate surface")
 
     if not text or not text.strip():
-        raise ProviderUnavailable("Gemini returned an empty response")
+        raise ProviderUnavailableError("Gemini returned an empty response")
     return json.loads(text)
 
 
@@ -428,7 +430,7 @@ def _anthropic(system_prompt: str, user_prompt: str, schema: dict) -> dict:
     try:
         import anthropic
     except ImportError as exc:
-        raise ProviderUnavailable("anthropic SDK not installed") from exc
+        raise ProviderUnavailableError("anthropic SDK not installed") from exc
 
     client = anthropic.Anthropic(timeout=TIMEOUT_SECONDS, max_retries=2)
     response = client.messages.create(
@@ -444,11 +446,11 @@ def _anthropic(system_prompt: str, user_prompt: str, schema: dict) -> dict:
     # exception. Reading content without checking would yield an empty packet and
     # call it a success.
     if getattr(response, "stop_reason", None) == "refusal":
-        raise ProviderUnavailable("model declined the request")
+        raise ProviderUnavailableError("model declined the request")
 
     text = next((b.text for b in response.content if b.type == "text"), "")
     if not text.strip():
-        raise ProviderUnavailable("model returned no text block")
+        raise ProviderUnavailableError("model returned no text block")
     return json.loads(text)
 
 
@@ -490,7 +492,7 @@ def draft_representment(case_file: dict[str, Any]) -> RepresentmentPacket:
     try:
         raw = call(SYSTEM_PROMPT, user_prompt, PACKET_SCHEMA)
         packet = RepresentmentPacket.model_validate(raw)
-    except ProviderUnavailable as exc:
+    except ProviderUnavailableError as exc:
         log.warning("%s unavailable (%s); drafting deterministically.", label, exc)
         return deterministic_packet(case_file, str(exc))
     except (json.JSONDecodeError, ValidationError) as exc:
@@ -499,7 +501,7 @@ def draft_representment(case_file: dict[str, Any]) -> RepresentmentPacket:
         log.warning("%s returned an invalid packet (%s); drafting deterministically.",
                     label, type(exc).__name__)
         return deterministic_packet(case_file, f"invalid response ({type(exc).__name__})")
-    except Exception as exc:                          # noqa: BLE001
+    except Exception as exc:
         # Transport errors, rate limits, timeouts - every SDK spells these differently,
         # and none of them is worth failing a filing deadline over.
         log.warning("%s call failed (%s); drafting deterministically.",
@@ -559,7 +561,7 @@ def to_razorpay_evidence(
                 for item in packet.compelling_evidence
             ),
         ],
-        submitted_at=int((submitted_at or datetime.now(timezone.utc)).timestamp()),
+        submitted_at=int((submitted_at or datetime.now(UTC)).timestamp()),
     )
 
     # Reason-specific proof fields. Populated with what the ledger can actually
@@ -610,7 +612,7 @@ def respond_to_dispute(
 
     return {
         "decision_id": decision_id,
-        "drafted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "drafted_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "reason_code": dispute.reason_code,
         "reason_code_label": REASON_CODES[dispute.reason_code],
         "hours_left_to_respond": round(dispute.hours_to_respond(), 1),

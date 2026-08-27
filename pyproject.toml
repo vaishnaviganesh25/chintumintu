@@ -1,0 +1,52 @@
+# Tool configuration only.
+#
+# There is deliberately no `[project]` table or build backend: this is an application,
+# not a library, and there is no importable package layout behind it. Declaring one
+# would make `pip install .` look supported when it would fail. The entry points are
+# the scripts at the root, listed in README.md.
+
+# --------------------------------------------------------------------------- #
+# Ruff - linting
+# --------------------------------------------------------------------------- #
+[tool.ruff]
+# The code habitually sits near 90 columns. 120 is the enforced ceiling rather than the
+# target: adopting a formatter at 100 would rewrite 2,247 lines, and most of that is the
+# hand-aligned report and table literals in train_model.py and generate_upi_dataset.py,
+# where the alignment is doing real work for the reader.
+line-length = 120
+target-version = "py313"
+exclude = ["finguard-dashboard", "models", "reports", "data", ".hypothesis"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes - unused imports and names, the ones that are always bugs
+    "I",        # import ordering
+    "B",        # bugbear - the mutable-default and zip-truncation class of defect
+    "C4",       # comprehension clarity
+    "SIM",      # simplifications that genuinely read better
+    "RET",      # return-path consistency
+    "UP",       # syntax that this Python version makes obsolete
+    "N",        # pep8 naming
+    "S",        # bandit rules, in-line with the linter
+    "ARG",      # unused arguments - usually a signature that drifted
+    "RUF",      # ruff's own checks
+]
+ignore = [
+    # `X_train`, `X_test`, `X` are the naming every ML codebase and every sklearn
+    # docstring uses. Renaming them to satisfy snake_case would make this code harder
+    # to read against the library it calls, not easier.
+    "N803",  # argument name should be lowercase
+    "N806",  # variable in function should be lowercase
+]
+
+[tool.ruff.lint.per-file-ignores]
+# An assert *is* the test. S101 is a warning about production code, not test code.
+"tests/*" = ["S101", "ARG001", "ARG005"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "audit_store", "chargeback_agent", "degradation", "explain_model",
+    "generate_upi_dataset", "graph_features", "main", "merchant_policy",
+    "network_signals", "predict_example", "razorpay_client", "train_model",
+]

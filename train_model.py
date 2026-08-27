@@ -35,7 +35,7 @@ import platform
 import re
 import sys
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
@@ -61,8 +61,6 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, RobustScaler
 from sklearn.model_selection import (
     StratifiedGroupKFold,
     StratifiedKFold,
@@ -70,12 +68,15 @@ from sklearn.model_selection import (
     cross_val_score,
     train_test_split,
 )
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, RobustScaler
 from xgboost import XGBClassifier
 
 from graph_features import GRAPH_FEATURES, compute_graph_features
-
 from merchant_policy import (
     DEFAULT as MERCHANT,
+)
+from merchant_policy import (
     binary_portfolio_cost,
     portfolio_cost,
     prevalence_at_which_covenant_binds,
@@ -486,23 +487,23 @@ def make_xgb(scale_pos_weight: float, n_estimators: int = 600, early_stopping: b
     Early stopping is switched off when the estimator is rebuilt for cross-validation,
     where there is no held-out eval set to stop against.
     """
-    params = dict(
-        n_estimators=n_estimators,
-        learning_rate=0.07,
-        max_depth=5,
-        min_child_weight=2,
-        subsample=0.9,
-        colsample_bytree=0.8,
-        reg_lambda=1.5,
-        gamma=0.1,
-        scale_pos_weight=scale_pos_weight,
+    params = {
+        "n_estimators": n_estimators,
+        "learning_rate": 0.07,
+        "max_depth": 5,
+        "min_child_weight": 2,
+        "subsample": 0.9,
+        "colsample_bytree": 0.8,
+        "reg_lambda": 1.5,
+        "gamma": 0.1,
+        "scale_pos_weight": scale_pos_weight,
         # aucpr, not logloss or auc: with 0.5% positives the PR curve is the only
         # metric that reflects how the model behaves on the class we care about.
-        eval_metric="aucpr",
-        tree_method="hist",
-        n_jobs=-1,
-        random_state=SEED,
-    )
+        "eval_metric": "aucpr",
+        "tree_method": "hist",
+        "n_jobs": -1,
+        "random_state": SEED,
+    }
     if early_stopping:
         params["early_stopping_rounds"] = 60
     return XGBClassifier(**params)
@@ -675,7 +676,7 @@ def cost_optimal_threshold(
     )
 
     order = np.argsort(-y_prob)
-    p, yt, amt = y_prob[order], y_true[order], amounts[order]
+    p, yt = y_prob[order], y_true[order]
     fp_c, fn_c = fp_costs[order], fn_costs[order]
 
     tp_cum = np.cumsum(yt)                       # frauds caught if we flag the top k
@@ -842,7 +843,7 @@ def incident_bleed_check(df: pd.DataFrame, train_index, test_index, y_test, y_pr
     fraud = test_meta[test_meta["y_true"] == 1]
     seen = fraud["receiver_vpa"].isin(train_fraud_receivers)
     return {
-        "test_fraud_rows": int(len(fraud)),
+        "test_fraud_rows": len(fraud),
         "receiver_seen_in_train_fraud": int(seen.sum()),
         "bleed_rate": float(seen.mean()) if len(fraud) else 0.0,
         "recall_warm": float(fraud.loc[seen, "y_pred"].mean()) if seen.any() else None,
@@ -948,7 +949,8 @@ def plot_threshold_sweep(calib: dict, chosen: float, outdir: Path) -> None:
 def plot_confusion_matrices(y_true, y_prob, default_thr: float, tuned_thr: float, outdir: Path) -> None:
     """Side-by-side heatmaps: what the default threshold costs versus the tuned one."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 5.8))
-    for ax, thr, title in zip(axes, [default_thr, tuned_thr], ["Default threshold", "Calibrated threshold"]):
+    for ax, thr, title in zip(axes, [default_thr, tuned_thr],
+                          ["Default threshold", "Calibrated threshold"], strict=True):
         cm = confusion_matrix(y_true, (y_prob >= thr).astype(int), labels=[0, 1])
         sns.heatmap(cm, annot=True, fmt=",d", cmap="Blues", cbar=False, ax=ax,
                     xticklabels=["Legitimate", "Fraud"], yticklabels=["Legitimate", "Fraud"])
@@ -1002,7 +1004,15 @@ def main() -> None:
     say("  (`fraud_pattern` is label-derived metadata from Module 1 - keeping it would leak the target)")
 
     X = engineer_features(df)
-    assert TARGET not in X.columns and "fraud_pattern" not in X.columns, "Target/leakage column leaked into X"
+    # Deliberately a raise, not an assert. `python -O` strips asserts, and this is
+    # the guard standing between the pipeline and training on its own label - the
+    # one failure this project could not detect from its own metrics, because a
+    # leaked target looks like an excellent model.
+    if TARGET in X.columns or "fraud_pattern" in X.columns:
+        raise RuntimeError(
+            "Target or leakage column reached the feature matrix: "
+            f"{sorted(set(X.columns) & {TARGET, 'fraud_pattern'})}"
+        )
     numeric, binary, categorical = split_feature_types(X)
     say(f"\nEngineered {X.shape[1]} features: "
         f"{len(numeric)} numeric, {len(binary)} binary, {len(categorical)} categorical")
@@ -1022,13 +1032,13 @@ def main() -> None:
     groups = groups.where(groups != "", pd.Series(df.index.astype(str), index=df.index))
 
     if GROUP_AWARE_SPLIT:
-        outer = StratifiedGroupKFold(n_splits=int(round(1 / TEST_SIZE)), shuffle=True,
+        outer = StratifiedGroupKFold(n_splits=round(1 / TEST_SIZE), shuffle=True,
                                      random_state=SEED)
         train_full_idx, test_idx = next(outer.split(X, y, groups))
         X_train_full, X_test = X.iloc[train_full_idx], X.iloc[test_idx]
         y_train_full, y_test = y.iloc[train_full_idx], y.iloc[test_idx]
 
-        inner = StratifiedGroupKFold(n_splits=int(round(1 / VAL_SIZE)), shuffle=True,
+        inner = StratifiedGroupKFold(n_splits=round(1 / VAL_SIZE), shuffle=True,
                                      random_state=SEED)
         inner_groups = groups.iloc[train_full_idx]
         tr_idx, val_idx = next(inner.split(X_train_full, y_train_full, inner_groups))
@@ -1302,7 +1312,7 @@ def main() -> None:
         say(f"  Adding the challenge action saves Rs.{saved:,.0f} on {len(y_test):,} payments "
             f"({saved / two['total_cost_inr']:.0%} of merchant loss),")
         say(f"  by moving {three['stepped_up']:,} payments off the analyst queue and onto a")
-        say(f"  step-up that costs a slice of conversion instead of the whole order. Manual")
+        say("  step-up that costs a slice of conversion instead of the whole order. Manual")
         say(f"  holds fall from {two['held']:,} to {three['held']:,}.")
 
     say("")
@@ -1397,7 +1407,7 @@ def main() -> None:
         recovered = graph_lift / full_gap if full_gap else 0.0
         say("  Graph features. Priced against the age-ablated model rather than the full one,")
         say("  because the full model is close to saturated and improving it proves nothing.")
-        say(f"  With account age removed, adding fan-in and collection velocity moves PR-AUC")
+        say("  With account age removed, adding fan-in and collection velocity moves PR-AUC")
         say(f"  {ab_neither['pr_auc']:.4f} -> {ab['pr_auc']:.4f} ({graph_lift:+.4f}) - recovering")
         say(f"  {recovered:.0%} of the ground lost by dropping account age altogether.")
         say("")
@@ -1446,7 +1456,7 @@ def main() -> None:
     config = {
         "project": "FinGuard - UPI fraud detection",
         "module": "2 - predictive ML engine",
-        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "best_model": best_name,
         "model_file": "finguard_xgboost.joblib" if best_name == "XGBoost" else "finguard_random_forest.joblib",
         "preprocessor_file": "preprocessor.joblib",
@@ -1472,17 +1482,27 @@ def main() -> None:
         },
         "dataset": {
             "file": DATA_CSV.name,
-            "rows": int(len(df)),
+            "rows": len(df),
             "fraud_rows": int(y.sum()),
             "fraud_rate": float(fraud_rate),
             "period_start": str(df["timestamp"].min()),
             "period_end": str(df["timestamp"].max()),
         },
         "split": {
-            "strategy": "stratified 64/16/20 train/validation/test",
-            "train_rows": int(len(y_tr)),
-            "validation_rows": int(len(y_val)),
-            "test_rows": int(len(y_test)),
+            # Was hardcoded to "stratified" regardless of GROUP_AWARE_SPLIT, so the
+            # provenance record contradicted the split the model was actually trained
+            # under - and contradicted the README's central methodological claim. It
+            # now reports what ran.
+            "strategy": (
+                f"group-aware 64/16/20 train/validation/test, grouped on `{GROUP_COLUMN}`"
+                if GROUP_AWARE_SPLIT
+                else "stratified 64/16/20 train/validation/test"
+            ),
+            "group_aware": GROUP_AWARE_SPLIT,
+            "grouped_on": GROUP_COLUMN if GROUP_AWARE_SPLIT else None,
+            "train_rows": len(y_tr),
+            "validation_rows": len(y_val),
+            "test_rows": len(y_test),
             "random_state": SEED,
         },
         "features": {
@@ -1513,9 +1533,9 @@ def main() -> None:
                 "cv_pr_auc_mean": res["cv_pr_auc_mean"],
                 "cv_pr_auc_std": res["cv_pr_auc_std"],
                 "cv_pr_auc_folds": res["cv_pr_auc_folds"],
-                "validation": {k: v for k, v in res["val"].items()},
-                "test_default_threshold": {k: v for k, v in res["test_default"].items()},
-                "test_calibrated_threshold": {k: v for k, v in res["test"].items()},
+                "validation": dict(res["val"]),
+                "test_default_threshold": dict(res["test_default"]),
+                "test_calibrated_threshold": dict(res["test"]),
             }
             for name, res in results.items()
         },
@@ -1566,7 +1586,7 @@ def main() -> None:
     say("  flag = prob >= cfg['optimal_threshold']")
 
     say.save(REPORT_DIR / "evaluation_report.txt")
-    print(f"\nReport saved to reports/evaluation_report.txt")
+    print("\nReport saved to reports/evaluation_report.txt")
 
 
 if __name__ == "__main__":

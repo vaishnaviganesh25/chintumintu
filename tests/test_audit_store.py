@@ -263,3 +263,32 @@ def test_a_reopened_ledger_still_sees_its_history(audit_db, tmp_path):
         assert reopened.stats()["decisions_recorded"] == 1
     finally:
         reopened.close()
+
+
+def test_the_two_queue_queries_differ_only_by_their_filter():
+    """The queue SELECT is written out twice so that neither is built at runtime.
+
+    That trade buys static SQL in the audit ledger at the cost of a copy that can drift.
+    This is the thing standing between those two queries, and it is why the duplication
+    is acceptable: strip the WHERE line and they must be identical.
+    """
+    actioned = [
+        line for line in AuditStore._RECENT_ACTIONED.splitlines()
+        if "WHERE d.decision NOT IN" not in line
+    ]
+    assert actioned == AuditStore._RECENT_ALL.splitlines()
+
+
+def test_the_filter_has_a_placeholder_for_every_accepted_decision():
+    """`NOT IN (?,?)` is written literally, so it must match the tuple bound into it.
+
+    Adding a third accepted decision without widening the clause would bind an extra
+    parameter against a two-slot filter - sqlite raises, but only on the code path that
+    passes `only_actioned`, which is the operator queue rather than anything a test
+    hits by default.
+    """
+    clause = next(
+        line for line in AuditStore._RECENT_ACTIONED.splitlines()
+        if "NOT IN" in line
+    )
+    assert clause.count("?") == len(AuditStore.ACCEPTED_DECISIONS)

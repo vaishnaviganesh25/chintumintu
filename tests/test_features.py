@@ -15,10 +15,10 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import pytest
+from conftest import raw_txn
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from conftest import raw_txn
 from train_model import (
     IDENTIFIER_COLUMNS,
     KNOWN_HANDLES,

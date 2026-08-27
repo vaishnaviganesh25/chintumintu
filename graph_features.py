@@ -126,7 +126,7 @@ def _rolling_distinct_and_counts(
     starts = np.flatnonzero(np.r_[True, g[1:] != g[:-1]])
     ends = np.r_[starts[1:], n]
 
-    for start, end in zip(starts, ends):
+    for start, end in zip(starts, ends, strict=True):
         seen: dict[int, int] = {}
         tail = start
         running = 0.0
@@ -191,7 +191,7 @@ def _rolling_decayed(
     starts = np.flatnonzero(np.r_[True, g[1:] != g[:-1]])
     ends = np.r_[starts[1:], n]
 
-    for start, end in zip(starts, ends):
+    for start, end in zip(starts, ends, strict=True):
         last_seen: dict[int, float] = {}
         intensity = 0.0
         previous_t = t[start]

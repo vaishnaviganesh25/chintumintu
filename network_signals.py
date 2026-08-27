@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from audit_store import AuditStore
@@ -96,10 +96,10 @@ def lookup(store: AuditStore, sender_vpa: str, receiver_vpa: str,
     if not store.ready:
         return NetworkReputation()
 
-    cutoff = ((now or datetime.now(timezone.utc)) - LOOKBACK).isoformat(timespec="microseconds")
+    cutoff = ((now or datetime.now(UTC)) - LOOKBACK).isoformat(timespec="microseconds")
 
     try:
-        with store._cursor() as cur:                  # noqa: SLF001 - same package
+        with store._cursor() as cur:
             payer = cur.execute(
                 """
                 SELECT
@@ -154,7 +154,7 @@ def lookup(store: AuditStore, sender_vpa: str, receiver_vpa: str,
             ),
             receiver_distinct_payers=receiver["payers"] or 0,
         )
-    except Exception as exc:                          # noqa: BLE001
+    except Exception as exc:
         log.warning("Network reputation lookup failed (%s); scoring without it.", exc)
         return NetworkReputation()
 

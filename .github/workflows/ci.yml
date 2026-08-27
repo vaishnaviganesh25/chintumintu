@@ -33,6 +33,16 @@ jobs:
       # `slow` and skipped here. Everything about feature engineering, the threshold
       # maths, merchant economics, the ledger, the responder and the degradation
       # ladder runs without them - which is most of the suite and all of the fast part.
+      - name: Lint
+        # Configured in pyproject.toml, including every deliberate suppression and why.
+        run: ruff check . --output-format=github
+
+      - name: Security - source
+        run: python -m bandit -q -r . -x ./finguard-dashboard,./tests
+
+      - name: Security - dependencies
+        run: python -m pip_audit -r requirements.txt --progress-spinner off
+
       - name: Test
         run: pytest -m "not slow" -q
 
@@ -72,6 +82,12 @@ jobs:
       - name: Full suite, including the tests that need the model
         run: pytest -q
 
+      - name: README claims still match the artifacts just produced
+        # The numbers in the README are re-derived from models/ and reports/ and
+        # compared against the prose. Stale documentation fails the build here rather
+        # than being discovered by a reader.
+        run: python verify_claims.py --verbose
+
       - name: Keep the evaluation report
         uses: actions/upload-artifact@v4
         with:
@@ -101,6 +117,11 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+      - name: Audit dependencies
+        # Advisory: a transitive dev-only advisory should not block a dashboard build,
+        # but it should be visible in the log.
+        run: npm audit --audit-level=high || true
 
       - name: Test
         run: npm run test:run

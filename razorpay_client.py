@@ -29,7 +29,7 @@ import base64
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -80,7 +80,7 @@ def to_paise(rupees: float) -> int:
     dispute that is one paisa short of the payment it contests will be rejected by the
     acquirer for a reason nobody will enjoy diagnosing.
     """
-    return int(round(float(rupees) * 100))
+    return round(float(rupees) * 100)
 
 
 def to_rupees(paise: int) -> float:
@@ -94,7 +94,7 @@ def _rzp_id(prefix: str) -> str:
 
 
 def _unix(dt: datetime) -> int:
-    return int(dt.replace(tzinfo=dt.tzinfo or timezone.utc).timestamp())
+    return int(dt.replace(tzinfo=dt.tzinfo or UTC).timestamp())
 
 
 # --------------------------------------------------------------------------- #
@@ -152,11 +152,11 @@ class DisputeEntity(BaseModel):
 
     def hours_to_respond(self, now: datetime | None = None) -> float:
         """How long is left to file. Negative once the deadline has passed."""
-        reference = now or datetime.now(timezone.utc)
+        reference = now or datetime.now(UTC)
         return (self.respond_by - _unix(reference)) / 3600
 
 
-def classify_reason(dispute_reason: str, method: str = "upi") -> str:
+def classify_reason(dispute_reason: str) -> str:
     """Map a free-text customer complaint onto a scheme reason code.
 
     Deterministic keyword triage rather than a model call. This decides which evidence
@@ -206,7 +206,7 @@ def build_dispute_entity(
     a real one changes only where the object comes from, never what the responder does
     with it.
     """
-    created = raised_at or datetime.now(timezone.utc)
+    created = raised_at or datetime.now(UTC)
     reason_code = classify_reason(dispute_reason)
     amount_paise = to_paise(decision["amount"])
 
@@ -228,7 +228,7 @@ def build_dispute_entity(
 # --------------------------------------------------------------------------- #
 # The live adapter
 # --------------------------------------------------------------------------- #
-class RazorpayUnavailable(RuntimeError):
+class RazorpayUnavailableError(RuntimeError):
     """Raised when the live API cannot be reached or is not configured."""
 
 
@@ -267,19 +267,19 @@ class RazorpayClient:
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self.configured:
-            raise RazorpayUnavailable("RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not set")
+            raise RazorpayUnavailableError("RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not set")
         try:
             import httpx
         except ImportError as exc:                    # pragma: no cover - httpx ships with the API
-            raise RazorpayUnavailable("httpx is not installed") from exc
+            raise RazorpayUnavailableError("httpx is not installed") from exc
 
         try:
             response = httpx.get(f"{API_BASE}{path}", headers=self._auth_header(),
                                  params=params, timeout=REQUEST_TIMEOUT_S)
             response.raise_for_status()
             return response.json()
-        except Exception as exc:                      # noqa: BLE001
-            raise RazorpayUnavailable(f"{type(exc).__name__}: {exc}") from exc
+        except Exception as exc:
+            raise RazorpayUnavailableError(f"{type(exc).__name__}: {exc}") from exc
 
     def fetch_disputes(self, count: int = 20) -> list[DisputeEntity]:
         """Live disputes, newest first. Empty in test mode - see the module docstring."""

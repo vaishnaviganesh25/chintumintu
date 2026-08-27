@@ -12,9 +12,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from fastapi.testclient import TestClient
-
 from conftest import requires_artifacts
+from fastapi.testclient import TestClient
 
 pytestmark = [requires_artifacts, pytest.mark.slow]
 

@@ -9,6 +9,8 @@ against hand-constructed score distributions where the right answer is known.
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -223,7 +225,9 @@ def test_recall_never_rises_as_the_threshold_rises(overlap):
     grid = np.linspace(0.01, 0.99, 25)
     recalls = [((scores >= t) & (y == 1)).sum() / y.sum() for t in grid]
 
-    assert all(a >= b - 1e-12 for a, b in zip(recalls, recalls[1:]))
+    # Successive pairs, so the two sequences are deliberately unequal in length -
+    # `zip(..., strict=True)` here would raise rather than compare.
+    assert all(a >= b - 1e-12 for a, b in pairwise(recalls))
 
 
 @settings(max_examples=40, deadline=None)

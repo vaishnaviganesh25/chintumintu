@@ -246,12 +246,12 @@ def fallback_verdict(
     if rules_available:
         try:
             return rule_engine_verdict(amount, receiver_vpa_age_days, timestamp)
-        except Exception:                             # noqa: BLE001
+        except Exception:
             log.exception("Rule engine failed; descending to the value floor.")
 
     try:
         return value_floor_verdict(amount)
-    except Exception:                                 # noqa: BLE001
+    except Exception:
         log.exception("Value floor failed; descending to fail-safe.")
 
     return fail_safe_verdict(amount)

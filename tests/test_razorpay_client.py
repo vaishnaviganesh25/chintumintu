@@ -8,7 +8,7 @@ nothing except a test that looks for it.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from hypothesis import given, settings
@@ -22,7 +22,7 @@ from razorpay_client import (
     DisputeEntity,
     DisputeEvidence,
     RazorpayClient,
-    RazorpayUnavailable,
+    RazorpayUnavailableError,
     build_dispute_entity,
     classify_reason,
     to_paise,
@@ -105,7 +105,7 @@ def test_timestamps_are_unix_integers_not_iso_strings():
 
 def test_the_response_deadline_follows_the_regulated_turnaround():
     """RBI's harmonised TAT is what the responder is racing, so it has to be right."""
-    created = datetime(2026, 8, 23, 3, 20, tzinfo=timezone.utc)
+    created = datetime(2026, 8, 23, 3, 20, tzinfo=UTC)
     dispute = build_dispute_entity(DECISION, "unauthorised", raised_at=created)
 
     expected = created + timedelta(days=DISPUTE_TAT_DAYS)
@@ -113,7 +113,7 @@ def test_the_response_deadline_follows_the_regulated_turnaround():
 
 
 def test_hours_remaining_goes_negative_once_the_deadline_passes():
-    created = datetime(2026, 8, 23, tzinfo=timezone.utc)
+    created = datetime(2026, 8, 23, tzinfo=UTC)
     dispute = build_dispute_entity(DECISION, "unauthorised", raised_at=created)
 
     assert dispute.hours_to_respond(created) == pytest.approx(DISPUTE_TAT_DAYS * 24)
@@ -234,7 +234,7 @@ def test_calling_the_api_without_credentials_raises_a_named_error(monkeypatch):
     for var in ("RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET"):
         monkeypatch.delenv(var, raising=False)
 
-    with pytest.raises(RazorpayUnavailable, match="not set"):
+    with pytest.raises(RazorpayUnavailableError, match="not set"):
         RazorpayClient().fetch_disputes()
 
 
