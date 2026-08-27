@@ -31,19 +31,25 @@ function App() {
             </Notice>
           )}
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          {/* The simulator is a tall form; the verdict and the explanation are each
+              short. Side by side at equal width the right column ran out of content
+              and left a hole at the bottom of the viewport. Stacking the two outputs
+              in a wider right column lets them fill the form's height instead. */}
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] gap-6 items-start">
             <TransactionSimulator onSimulate={simulateTransaction} isLoading={isLoading} />
-            <EvaluationPanel
-              isLoading={isLoading}
-              results={results}
-              threshold={health?.threshold}
-            />
-          </div>
 
-          <XAIPanel
-            explanation={results?.xai_explanation || null}
-            shapFeatures={results?.shap_features || null}
-          />
+            <div className="flex flex-col gap-6 min-w-0">
+              <EvaluationPanel
+                isLoading={isLoading}
+                results={results}
+                threshold={health?.threshold}
+              />
+              <XAIPanel
+                explanation={results?.xai_explanation || null}
+                shapFeatures={results?.shap_features || null}
+              />
+            </div>
+          </div>
         </div>
       )}
 

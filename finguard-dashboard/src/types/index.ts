@@ -54,6 +54,25 @@ export interface FraudDetectionResponse {
   execution_time_ms: number; // Backend inference latency in milliseconds
   xai_explanation: string; // Human-readable explanation
   shap_features: SHAPFeature[]; // Per-concept contribution breakdown
+  /**
+   * Ledger id for this scoring event, replayable later at
+   * `GET /api/v1/decisions/{id}`. Null when the ledger was unavailable — scoring
+   * continues regardless, and the null is how the caller learns it went unrecorded.
+   */
+  decision_id?: string | null;
+  /**
+   * Which rung of the degradation ladder answered. Anything other than "full model"
+   * means a coarser fallback produced this, and the panel has to say so.
+   */
+  rung?: string;
+  degraded?: boolean;
+  /**
+   * Why cross-merchant reputation changed the action, if it did. Empty in the normal
+   * case. When it is not empty the chosen action will not be the cheapest one, and a
+   * panel showing the costs without this reads as a bug.
+   */
+  network_reasons?: string[];
+  network_reputation?: Record<string, number>;
 }
 
 /**

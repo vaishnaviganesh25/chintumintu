@@ -125,6 +125,18 @@ function parseAnalysis(payload: unknown): FraudDetectionResponse {
       typeof data.execution_time_ms === 'number' ? data.execution_time_ms : 0,
     xai_explanation: data.xai_explanation,
     shap_features: data.shap_features.filter(isShapFeature),
+    // Optional on the wire: an older backend omits them, and the UI degrades to not
+    // showing the corresponding detail rather than rendering `undefined`.
+    decision_id: typeof data.decision_id === 'string' ? data.decision_id : null,
+    rung: typeof data.rung === 'string' ? data.rung : undefined,
+    degraded: data.degraded === true,
+    network_reasons: Array.isArray(data.network_reasons)
+      ? data.network_reasons.filter((r): r is string => typeof r === 'string')
+      : [],
+    network_reputation:
+      data.network_reputation && typeof data.network_reputation === 'object'
+        ? data.network_reputation
+        : {},
   };
 }
 
