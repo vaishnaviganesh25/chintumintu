@@ -152,14 +152,17 @@ MERCHANT ECONOMICS (test set)
   step-up that costs a slice of conversion instead of the whole order. Manual
   holds fall from 111 to 81.
 
-  Card-network dispute covenant (Visa VDMP / Mastercard ECP):
+  Card-network dispute covenant (Visa VAMP / Mastercard ECM):
     Expected disputes      : 3.0 of 20,000 payments
-    Dispute ratio          : 0.0150%  (ceiling 0.90%)
+    Dispute ratio          : 0.0150%  (ceiling 1.50%)
     Within covenant        : yes
+    Note                   : VAMP scores reported fraud plus disputes over
+                             settled card-not-present volume, so the ratio above
+                             is narrower than the one Visa measures.
 
   Being straight about this constraint: at 0.5% fraud prevalence the covenant
   is slack by construction - even letting every fraud through would sit under
-  the 0.9% ceiling. It starts to bind above 11.3% prevalence at the 92%
+  the 1.5% ceiling. It starts to bind above 18.8% prevalence at the 92%
   recall the age-ablated model achieves, which is the regime a compromised
   merchant category actually lives in. It is reported because it is the real
   operating limit, not because it is doing work on this dataset.
@@ -255,7 +258,7 @@ ARTIFACTS
   models/model_config.json                       17.0 KB
   models/preprocessor.joblib                      8.3 KB
   reports/confusion_matrices.png                 45.3 KB
-  reports/evaluation_report.txt                  16.1 KB
+  reports/evaluation_report.txt                  16.7 KB
   reports/explainability_report.txt               8.2 KB
   reports/feature_importance.png                122.1 KB
   reports/pr_roc_curves.png                      92.6 KB

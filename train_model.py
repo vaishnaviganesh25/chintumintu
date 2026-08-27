@@ -1306,17 +1306,21 @@ def main() -> None:
         say(f"  holds fall from {two['held']:,} to {three['held']:,}.")
 
     say("")
-    say("  Card-network dispute covenant (Visa VDMP / Mastercard ECP):")
+    say("  Card-network dispute covenant (Visa VAMP / Mastercard ECM):")
     say(f"    Expected disputes      : {three['expected_disputes']:.1f} of {len(y_test):,} payments")
     say(f"    Dispute ratio          : {three['dispute_ratio']:.4%}  "
         f"(ceiling {three['dispute_ceiling']:.2%})")
     say(f"    Within covenant        : {'yes' if three['within_covenant'] else 'NO - remediation programme'}")
+    say("    Note                   : VAMP scores reported fraud plus disputes over")
+    say("                             settled card-not-present volume, so the ratio above")
+    say("                             is narrower than the one Visa measures.")
 
     binds_at = prevalence_at_which_covenant_binds(0.92, MERCHANT)
     say("")
     say("  Being straight about this constraint: at 0.5% fraud prevalence the covenant")
     say("  is slack by construction - even letting every fraud through would sit under")
-    say(f"  the 0.9% ceiling. It starts to bind above {binds_at:.1%} prevalence at the 92%")
+    say(f"  the {MERCHANT.dispute_ratio_ceiling:.1%} ceiling. It starts to bind above "
+        f"{binds_at:.1%} prevalence at the 92%")
     say("  recall the age-ablated model achieves, which is the regime a compromised")
     say("  merchant category actually lives in. It is reported because it is the real")
     say("  operating limit, not because it is doing work on this dataset.")

@@ -1,7 +1,7 @@
 {
   "project": "FinGuard - UPI fraud detection",
   "module": "2 - predictive ML engine",
-  "created_at": "2026-08-25T20:23:41+00:00",
+  "created_at": "2026-08-27T11:03:27+00:00",
   "best_model": "RandomForest",
   "model_file": "finguard_random_forest.joblib",
   "preprocessor_file": "preprocessor.joblib",
@@ -15,7 +15,7 @@
     "met_target_recall": true,
     "out_of_fold_precision": 0.9973333333333333,
     "out_of_fold_recall": 0.935,
-    "f1_optimal_threshold": 0.539851577625401,
+    "f1_optimal_threshold": 0.5398515776254009,
     "single_split_alternative": 0.6765980063121547,
     "out_of_fold_at_default": {
       "threshold": 0.5,
@@ -477,7 +477,7 @@
       "manual_review_inr": 150.0,
       "step_up_abandon_rate": 0.08,
       "step_up_catch_rate": 0.85,
-      "dispute_ratio_ceiling": 0.009
+      "dispute_ratio_ceiling": 0.015
     },
     "three_action_policy": {
       "total_cost_inr": 99548.442664,
@@ -494,7 +494,7 @@
       "good_orders_held": 1,
       "expected_disputes": 3.0000000000000004,
       "dispute_ratio": 0.00015000000000000001,
-      "dispute_ceiling": 0.009,
+      "dispute_ceiling": 0.015,
       "within_covenant": true
     },
     "binary_policy_at_threshold": {
@@ -505,7 +505,7 @@
       "good_orders_held": 12,
       "dispute_ratio": 5e-05
     },
-    "covenant_binds_above_prevalence": 0.11250000000000004
+    "covenant_binds_above_prevalence": 0.18750000000000008
   },
   "ablation_no_vpa_age": {
     "threshold": 0.9771733283996582,

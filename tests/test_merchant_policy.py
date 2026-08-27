@@ -20,6 +20,7 @@ from merchant_policy import (
     binary_portfolio_cost,
     portfolio_cost,
     prevalence_at_which_covenant_binds,
+    DISPUTE_RATIO_CEILING,
 )
 from train_model import cost_optimal_threshold, expected_cost_at
 
@@ -272,12 +273,16 @@ def test_perfect_recall_means_the_covenant_can_never_bind():
     assert prevalence_at_which_covenant_binds(1.0) is None
 
 
-@pytest.mark.parametrize(
-    ("recall", "expected"),
-    [(0.90, 0.09), (0.92, 0.1125), (0.50, 0.018)],
-)
-def test_the_binding_prevalence_follows_the_stated_formula(recall, expected):
-    """ceiling / (1 - recall). Stated in the report, so it has to be the one computed."""
+@pytest.mark.parametrize("recall", [0.90, 0.92, 0.50])
+def test_the_binding_prevalence_follows_the_stated_formula(recall):
+    """ceiling / (1 - recall). Stated in the report, so it has to be the one computed.
+
+    Derived from the constant rather than hardcoded. The literals here used to encode a
+    0.9% ceiling, so moving the ceiling to the threshold the networks actually enforce
+    broke a test whose stated subject is the *formula* - which is a test pinning the
+    wrong thing.
+    """
+    expected = DISPUTE_RATIO_CEILING / (1.0 - recall)
     assert prevalence_at_which_covenant_binds(recall) == pytest.approx(expected, rel=1e-6)
 
 

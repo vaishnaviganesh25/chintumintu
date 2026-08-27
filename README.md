@@ -99,7 +99,7 @@ Runtime is roughly 30 seconds and the output is `upi_synthetic_data.csv` (~13 MB
   values (₹10/₹20/₹50/₹100/₹200) the way real UPI spending is.
 - **30% higher value, ₹1,000–₹15,000** — rent, utilities, EMIs, dining.
 - **Hour-of-day intensity curve** peaking 09:00–21:00 and nearly flat 01:00–04:00,
-  which is what gives the odd-hour fraud signature its contrast (~1.2% of legitimate
+  which is what gives the odd-hour fraud signature its contrast (~1.1% of legitimate
   traffic falls in the 01:00–04:00 window).
 - Senders and receivers are drawn with gamma-distributed weights, so a few accounts
   are much busier than the rest instead of everything being uniform.
@@ -142,7 +142,9 @@ fraudulent receiver was 0–20 days old and almost every legitimate one was 150+
 noticed, and the ablation showed how much of the headline score rested on that one
 column. A model trained that way learns the artefact rather than the behaviour.
 
-Two layers fix it, and the run report measures both:
+Two layers fix it. The precisions below are measured directly on the generated
+dataset — `receiver_vpa_age_days` and `amount` against `is_fraud`, so they are
+reproducible from the CSV without training anything:
 
 | Rule a lazy model might learn | Precision on this data |
 | --- | --- |
@@ -613,20 +615,33 @@ anything carrying more than a fraction of a percent of risk. On a book with diff
 scores that reached **94% of legitimate traffic** — arithmetically optimal, and it
 would destroy conversion. Friction is a portfolio resource, not a per-row one, so it
 is capped at 10% of payments and spent on the rows where a challenge saves the most.
-The shipped policy uses 6.2% of that budget.
+The shipped policy spends **3.67% of payments** on challenges — just over a third
+of the allowance, with headroom left.
 
 That failure was found by a test, not by inspection. `test_the_step_up_budget_is_never_exceeded`
 exists because of it.
 
 ## The dispute covenant, and why it does nothing here
 
-Card networks put merchants into a remediation programme above roughly **0.9% disputes
-by count** (Visa VDMP, Mastercard ECP). That is a hard operating limit, so it is
-reported — at 0.0158% the shipped policy sits far inside it.
+Card networks put merchants into a remediation programme above a **1.5% ratio** — Visa
+VAMP since 1 April 2026, down from 2.2%, and Mastercard ECM at the same 1.5% once a
+merchant clears 100 chargebacks in a month. That is a hard operating limit, so it is
+reported — at 0.0150% the shipped policy sits far inside it.
+
+Two caveats the single ratio cannot carry. VAMP's numerator is reported fraud *plus*
+disputes over settled card-not-present volume, so a disputes-only figure sits under what
+Visa actually scores; and neither programme reaches the UPI leg, where disputes run
+through NPCI, while the ratio here is taken across the whole book. Both are recorded
+rather than silently corrected — on this dataset the covenant is slack by two orders of
+magnitude either way.
+
+This section previously cited **VDMP at 0.9%**. Visa retired VDMP on 31 March 2025 and
+folded it, with VFMP, into VAMP; the figure was right for a programme that no longer
+existed.
 
 Being straight about it: at 0.5% fraud prevalence the covenant is **slack by
 construction**. Even letting every fraud through would stay under the ceiling. It
-begins to bind above **11.3% prevalence** at the 92% recall the age-ablated model
+begins to bind above **18.8% prevalence** at the 92% recall the age-ablated model
 achieves. It is in the report because it is the real constraint in production, not
 because it is doing work on this dataset.
 

@@ -61,10 +61,27 @@ STEP_UP_ABANDON_RATE = 0.08
 # Module 1 work.
 STEP_UP_CATCH_RATE = 0.85
 
-# Card-network dispute monitoring (Visa VDMP, Mastercard ECP) puts merchants into a
-# remediation programme above roughly 0.9% disputes by count, with fines and
-# ultimately termination. This is a hard operating covenant, not a preference.
-DISPUTE_RATIO_CEILING = 0.009
+# Card-network dispute monitoring. Visa retired VDMP on 31 March 2025 and folded it,
+# together with the fraud programme VFMP, into VAMP; from 1 April 2026 a merchant is
+# "excessive" at a VAMP ratio of 1.5%, down from 2.2%. Mastercard's ECM sits at the same
+# 1.5% chargeback-to-transaction ratio once a merchant clears 100 chargebacks in a month.
+# Fines and ultimately termination follow, so this is a hard operating covenant rather
+# than a preference.
+#
+# This file previously encoded 0.9% and named VDMP, a programme that had been dead for a
+# year. The number was right for VDMP and wrong for anything current.
+#
+# Two things a single ratio cannot carry, recorded rather than quietly corrected. VAMP's
+# numerator is reported fraud *plus* disputes over settled card-not-present volume, so
+# the disputes-only figure computed below sits under what Visa actually measures. And
+# neither programme reaches the UPI leg - those disputes run through NPCI - while the
+# ratio below is taken across the whole book. On this dataset the covenant is slack by
+# roughly two orders of magnitude either way, so neither approximation changes a
+# decision; both would matter on a book that ran anywhere near the line.
+#
+#   Visa VAMP thresholds ....... https://merchantriskcouncil.org/learning/resource-center
+#   Mastercard ECM ............. chargeback-to-transaction ratio, >=100 chargebacks/month
+DISPUTE_RATIO_CEILING = 0.015
 
 # Ceiling on the share of payments that may be challenged.
 #

@@ -3,6 +3,74 @@ import { Icon } from './Icon';
 import { Panel } from './ui';
 import type { SHAPFeature } from '../types';
 
+/**
+ * Where the numbers in this panel come from.
+ *
+ * An explanation panel that cannot say what produced its numbers is asking to be taken
+ * on trust, which is the opposite of the point. Both references were checked against
+ * the published record rather than written from memory; the second is cited by its
+ * journal title, with the link pointing at the freely readable preprint, which carries
+ * a slightly different title.
+ */
+const SOURCES = [
+  {
+    cite: 'Lundberg & Lee (2017). A Unified Approach to Interpreting Model Predictions.',
+    where: 'Advances in Neural Information Processing Systems 30',
+    href: 'https://arxiv.org/abs/1705.07874',
+    note: 'The additivity and consistency guarantees the breakdown above relies on.',
+  },
+  {
+    cite:
+      'Lundberg, Erion, Chen et al. (2020). From local explanations to global ' +
+      'understanding with explainable AI for trees.',
+    where: 'Nature Machine Intelligence 2, 56–67',
+    href: 'https://arxiv.org/abs/1905.04610',
+    note: 'TreeSHAP: exact Shapley values for tree ensembles in polynomial time.',
+  },
+] as const;
+
+function Method() {
+  return (
+    <footer
+      style={{ marginTop: 18, paddingTop: 12, borderTop: '1px solid var(--edge)' }}
+    >
+      <h3 className="nb-label" style={{ marginBottom: 6 }}>
+        Method
+      </h3>
+      <p style={{ fontSize: 12, color: 'var(--muted)', maxWidth: '84ch', marginBottom: 10 }}>
+        Contributions are Shapley values computed with TreeSHAP over the fitted tree
+        ensemble — the exact polynomial-time algorithm for trees, not a sampling
+        approximation. Feature-level values are summed into the concepts above, so one
+        fact produces one bar instead of one per encoded column, and the sign survives
+        that aggregation: positive pushes the score toward fraud, negative away from it.
+      </p>
+      <ul className="flex flex-col gap-2" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+        {SOURCES.map((s) => (
+          <li key={s.href} style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+            <a
+              href={s.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-baseline gap-1"
+              style={{ color: 'var(--accent)', fontWeight: 600 }}
+            >
+              {s.cite}
+              <span style={{ transform: 'translateY(1px)' }}>
+                <Icon name="external" size={11} />
+              </span>
+            </a>{' '}
+            <span className="nb-mono" style={{ color: 'var(--faint)' }}>
+              {s.where}
+            </span>
+            <br />
+            <span style={{ color: 'var(--muted)' }}>{s.note}</span>
+          </li>
+        ))}
+      </ul>
+    </footer>
+  );
+}
+
 interface XAIPanelProps {
   explanation: string | null;
   shapFeatures: SHAPFeature[] | null;
@@ -63,6 +131,8 @@ export function XAIPanel({ explanation, shapFeatures }: XAIPanelProps) {
           </div>
         </div>
       )}
+
+      <Method />
     </Panel>
   );
 }
