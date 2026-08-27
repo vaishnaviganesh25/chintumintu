@@ -19,7 +19,14 @@ RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 ENV PATH="/install/bin:$PATH" PYTHONPATH="/install/lib/python3.13/site-packages"
 
-COPY generate_upi_dataset.py train_model.py explain_model.py merchant_policy.py ./
+# Enumerated rather than `COPY *.py` so an API change does not invalidate the
+# four-minute train below. That trade costs vigilance, and the vigilance lapsed: three
+# modules joined the import graph after this file was written and none of them reached
+# the image, so the build died on `import graph_features` for three commits running.
+# tests/test_packaging.py now walks the imports and fails the fast suite if either of
+# these lists falls behind again.
+COPY generate_upi_dataset.py train_model.py explain_model.py merchant_policy.py \
+     graph_features.py ./
 
 # ~30 s + ~110 s + ~100 s. Cached unless one of the three scripts changes.
 RUN python generate_upi_dataset.py \
@@ -42,7 +49,8 @@ COPY --from=builder /build/models  ./models
 COPY --from=builder /build/reports ./reports
 
 COPY main.py train_model.py explain_model.py merchant_policy.py \
-     audit_store.py chargeback_agent.py degradation.py ./
+     audit_store.py chargeback_agent.py degradation.py graph_features.py \
+     network_signals.py razorpay_client.py ./
 
 # The ledger lives on a volume - a decision record that vanishes when the container
 # is replaced is not an audit trail.
