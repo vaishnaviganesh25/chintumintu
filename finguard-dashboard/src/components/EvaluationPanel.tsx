@@ -43,6 +43,12 @@ const ACTION_INSTRUCTION: Record<MerchantAction, string> = {
   HOLD: 'Review before fulfilment',
 };
 
+const ACTION_SETTLEMENT: Record<MerchantAction, string> = {
+  ACCEPT: 'settles now',
+  STEP_UP: 'settles once the challenge clears',
+  HOLD: 'not settled',
+};
+
 const rupees = (v: number) => `₹${Math.round(v).toLocaleString('en-IN')}`;
 
 /* -------------------------------------------------------------------------- */
@@ -66,7 +72,15 @@ function RiskBar({
 }) {
   const reduced = useReducedMotion();
   const pct = Math.max(0, Math.min(1, probability));
-  const counted = useCountUp(pct * 100);
+
+  // A model that prints "100.0%" is claiming a certainty it does not have — the figure
+  // underneath is a rounded 0.9997, and a calibration-conscious reviewer will read the
+  // rounding as a claim. Clamp the *displayed* number at both ends and say so with the
+  // comparator; the raw probability still drives the bar and the decision.
+  const pegged = pct >= 0.9995 ? 'high' : pct > 0 && pct < 0.0005 ? 'low' : null;
+  const counted = useCountUp(pegged === 'high' ? 99.9 : pegged === 'low' ? 0.1 : pct * 100);
+  const readout = `${pegged === 'high' ? '>' : pegged === 'low' ? '<' : ''}${counted.toFixed(1)}%`;
+
   const line = typeof threshold === 'number' ? Math.max(0, Math.min(1, threshold)) : null;
   const over = line !== null && pct >= line;
 
@@ -75,7 +89,7 @@ function RiskBar({
       <div className="flex items-baseline justify-between" style={{ marginBottom: 7 }}>
         <h3 className="nb-label">Fraud risk</h3>
         <span className="nb-mono nb-display" style={{ fontSize: 20, color: tone }}>
-          {counted.toFixed(1)}%
+          {readout}
         </span>
       </div>
 
@@ -90,9 +104,9 @@ function RiskBar({
         }}
         role="img"
         aria-label={
-          `Fraud risk ${(pct * 100).toFixed(1)} percent` +
+          `Fraud risk ${readout}` +
           (line !== null
-            ? `, ${over ? 'above' : 'below'} the ${(line * 100).toFixed(1)} percent decision threshold`
+            ? `, ${over ? 'above' : 'below'} the ${(line * 100).toFixed(1)} percent calibrated cut-off`
             : '')
         }
       >
@@ -119,17 +133,54 @@ function RiskBar({
       </div>
 
       {line !== null && (
-        <div
-          className="nb-mono flex justify-between"
-          style={{ fontSize: 10.5, color: 'var(--faint)', marginTop: 4 }}
-        >
-          <span>0%</span>
-          <span style={{ color: 'var(--ink)', fontWeight: 700 }}>
-            holds at {(line * 100).toFixed(1)}%
+        // In a space-between row this caption landed at the 50% mark while the notch it
+        // describes was at 26.8% — a label pointing at a number that is not there. It is
+        // now anchored to the notch, with a tick tying the two together.
+        <div style={{ position: 'relative', height: 21, marginTop: 3 }}>
+          <span
+            style={{
+              position: 'absolute',
+              left: `${line * 100}%`,
+              top: 0,
+              width: 3,
+              height: 5,
+              marginLeft: -1,
+              background: 'var(--ink)',
+            }}
+            aria-hidden="true"
+          />
+          <span
+            className="nb-mono"
+            style={{
+              position: 'absolute',
+              top: 7,
+              left: `${line * 100}%`,
+              // Near either end the label would overhang the track, so it pins to the
+              // inside edge instead of centring.
+              transform: `translateX(${line < 0.14 ? '0%' : line > 0.86 ? '-100%' : '-50%'})`,
+              whiteSpace: 'nowrap',
+              fontSize: 10.5,
+              fontWeight: 700,
+              color: 'var(--ink)',
+            }}
+          >
+            calibrated cut-off {(line * 100).toFixed(1)}%
           </span>
-          <span>100%</span>
+          <span
+            className="nb-mono"
+            style={{ position: 'absolute', top: 7, left: 0, fontSize: 10.5, color: 'var(--faint)' }}
+          >
+            0%
+          </span>
+          <span
+            className="nb-mono"
+            style={{ position: 'absolute', top: 7, right: 0, fontSize: 10.5, color: 'var(--faint)' }}
+          >
+            100%
+          </span>
         </div>
       )}
+
     </section>
   );
 }
@@ -143,6 +194,10 @@ function RiskBar({
  * The project's central claim is that the action is chosen by price rather than by a
  * threshold on a score. That claim is checkable here in one glance — or visibly not,
  * when something overrode it.
+ *
+ * Length carries cost and nothing else. Action colour sits on a swatch and on the bar
+ * that was actually taken, never on the others: a full-width bar in ACCEPT-green for
+ * the single most expensive option was reading as an endorsement of it.
  */
 function CostBars({
   costs,
@@ -158,8 +213,18 @@ function CostBars({
   if (entries.length === 0) return null;
 
   const max = Math.max(...entries.map(([, v]) => v), 1);
-  const cheapest = entries.reduce((a, b) => (b[1] < a[1] ? b : a))[0];
   const ordered = [...entries].sort((a, b) => a[1] - b[1]);
+  const cheapest = ordered[0][0];
+  const chosenCost = costs[chosen];
+
+  // The punchline of the whole panel is one subtraction, so do it for the reader
+  // rather than making them do it across two columns.
+  const saving =
+    typeof chosenCost === 'number' && chosen === cheapest && ordered.length > 1
+      ? ordered[1][1] - chosenCost
+      : null;
+  const excess =
+    typeof chosenCost === 'number' && chosen !== cheapest ? chosenCost - ordered[0][1] : null;
 
   return (
     <section>
@@ -167,20 +232,31 @@ function CostBars({
         What each action would cost
       </h3>
 
-      <div className="flex flex-col gap-1.5">
+      <div className="flex flex-col gap-1.5" role="list">
         {ordered.map(([action, cost], i) => {
           const isChosen = action === chosen;
           const isCheapest = action === cheapest;
-          const tone = `var(--${ACTION_TONE[action]}-fill)`;
 
           return (
-            <div key={action} className="flex items-center gap-2.5">
+            <div key={action} className="flex items-center gap-2.5" role="listitem">
+              {/* The action's colour lives on this swatch, not on the bar. Colour is
+                  identity here; length is money. */}
+              <span
+                style={{
+                  width: 10,
+                  height: 10,
+                  flexShrink: 0,
+                  background: `var(--${ACTION_TONE[action]}-fill)`,
+                  border: '1px solid var(--ink)',
+                }}
+                aria-hidden="true"
+              />
               <span
                 className="nb-mono"
                 style={{
                   fontSize: 10.5,
                   fontWeight: 700,
-                  width: 74,
+                  width: 68,
                   flexShrink: 0,
                   color: isChosen ? 'var(--ink)' : 'var(--muted)',
                 }}
@@ -203,7 +279,16 @@ function CostBars({
                   initial={reduced ? false : { width: 0 }}
                   animate={{ width: `${Math.max(2, (cost / max) * 100)}%` }}
                   transition={reduced ? { duration: 0 } : { ...SPRING, delay: i * 0.06 }}
-                  style={{ height: '100%', background: tone, opacity: isChosen ? 1 : 0.45 }}
+                  style={{
+                    height: '100%',
+                    // Only the taken action is coloured. Painting every bar its action
+                    // colour put a full-width *green* bar on ACCEPT whenever accepting
+                    // was the most expensive option — long and green reads as "good",
+                    // which is the exact opposite of what the number says.
+                    background: isChosen
+                      ? `var(--${ACTION_TONE[action]}-fill)`
+                      : 'color-mix(in srgb, var(--ink) 22%, transparent)',
+                  }}
                 />
               </div>
 
@@ -233,6 +318,27 @@ function CostBars({
           );
         })}
       </div>
+
+      {(saving !== null || excess !== null) && (
+        <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 9 }}>
+          {saving !== null ? (
+            <>
+              <strong style={{ color: 'var(--ink)', fontWeight: 700 }}>
+                {ACTION_LABEL[chosen]}
+              </strong>{' '}
+              is the cheapest of the three — {rupees(saving)} below the next best.
+            </>
+          ) : (
+            <>
+              Costs{' '}
+              <strong style={{ color: 'var(--ink)', fontWeight: 700 }}>
+                {rupees(excess as number)} more
+              </strong>{' '}
+              than {ACTION_LABEL[cheapest]}, which was the cheapest.
+            </>
+          )}
+        </p>
+      )}
     </section>
   );
 }
@@ -256,8 +362,20 @@ export function EvaluationPanel({
   const cheapest = entries.length
     ? entries.reduce((a, b) => (b[1] < a[1] ? b : a))[0]
     : null;
-  const escalated =
-    results !== null && cheapest !== null && cheapest !== results.action;
+  const reasons = results?.network_reasons ?? [];
+  const outranked = results !== null && cheapest !== null && cheapest !== results.action;
+  // Two separate triggers on purpose. `outranked` must be explained or the costs read as
+  // a bug; `reasons` is evidence that fired and is worth showing even when the ordering
+  // came out the same way regardless.
+  const escalated = outranked || reasons.length > 0;
+
+  // `status` is the legacy block/allow call at the calibrated cut-off; `action` is the
+  // cost-chosen one. HOLD and ACCEPT are the only actions that map onto that binary,
+  // so a STEP_UP is always a divergence from it.
+  const divergent =
+    results !== null &&
+    (results.action === 'STEP_UP' ||
+      (results.status === 'BLOCKED') !== (results.action === 'HOLD'));
 
   return (
     <Panel
@@ -315,7 +433,7 @@ export function EvaluationPanel({
                   {ACTION_INSTRUCTION[results.action]}
                 </p>
                 <p className="nb-mono" style={{ fontSize: 11.5, color: 'var(--muted)' }}>
-                  {results.status === 'BLOCKED' ? 'not settled' : 'settled'}
+                  {ACTION_SETTLEMENT[results.action]}
                 </p>
               </div>
             </div>
@@ -326,16 +444,36 @@ export function EvaluationPanel({
               tone={`var(--${ACTION_TONE[results.action]}-fill)`}
             />
 
+            {/* The cut-off and the cost comparison are two different policies over the
+                same probability, and they do not always agree. That disagreement is the
+                argument this project makes, so it is stated rather than left for the
+                reader to infer from a notch. */}
+            {typeof threshold === 'number' && divergent && (
+              <p style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: -8 }}>
+                A single cut-off at {(threshold * 100).toFixed(1)}% would have{' '}
+                <strong style={{ color: 'var(--ink)', fontWeight: 700 }}>
+                  {results.status === 'BLOCKED' ? 'blocked' : 'allowed'}
+                </strong>{' '}
+                this payment. Pricing the three actions chose{' '}
+                <strong style={{ color: 'var(--ink)', fontWeight: 700 }}>
+                  {ACTION_LABEL[results.action]}
+                </strong>
+                .
+              </p>
+            )}
+
             <CostBars costs={costs} chosen={results.action} />
 
             {/* The panel would otherwise be showing a cheaper action it did not take,
                 with no reason given — which reads as a defect rather than a policy. */}
             {escalated && (
               <Notice tone="challenge" icon="network">
-                <strong style={{ fontWeight: 700 }}>Escalated past the cheapest action.</strong>{' '}
-                {results.network_reasons?.length
-                  ? results.network_reasons.join('; ')
-                  : 'Cross-merchant evidence raised this beyond what the payment alone justifies.'}
+                <strong style={{ fontWeight: 700 }}>
+                  {outranked ? 'Escalated past the cheapest action.' : 'Cross-merchant evidence.'}
+                </strong>{' '}
+                {reasons.length
+                  ? reasons.join('; ')
+                  : 'Reputation raised this beyond what the payment alone justifies.'}
               </Notice>
             )}
 

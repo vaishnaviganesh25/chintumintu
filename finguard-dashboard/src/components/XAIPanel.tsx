@@ -1,4 +1,5 @@
 import { SHAPChart } from './SHAPChart';
+import { Icon } from './Icon';
 import { Panel } from './ui';
 import type { SHAPFeature } from '../types';
 
@@ -14,14 +15,20 @@ export function XAIPanel({ explanation, shapFeatures }: XAIPanelProps) {
     <Panel title="Explanation" subtitle="Why the engine decided what it did — signed, additive contributions">
       
       {!hasData && (
-        <div className="flex items-center justify-center h-64 text-[var(--muted)]">
-          <div className="text-center">
-            <svg className="w-16 h-16 mx-auto mb-4 text-[var(--faint)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-            </svg>
-            <p className="nb-display" style={{ fontSize: 15 }}>No explanation yet</p>
-            <p style={{ fontSize: 12.5, color: 'var(--muted)', marginTop: 4 }}>Score a payment to see what drove the decision.</p>
-          </div>
+        // Matches the verdict panel's empty state: left-aligned, on the shared icon
+        // grid. It was a centred column round a 64px stock lightbulb drawn at a stroke
+        // weight nothing else in the app uses.
+        <div className="flex flex-col items-start gap-2" style={{ padding: '28px 0 36px' }}>
+          <span style={{ color: 'var(--faint)' }}>
+            <Icon name="database" size={26} />
+          </span>
+          <p className="nb-display" style={{ fontSize: 17 }}>
+            No explanation yet
+          </p>
+          <p style={{ fontSize: 12.5, color: 'var(--muted)', maxWidth: '46ch' }}>
+            Every decision carries a signed, additive breakdown of what drove it. Score a
+            payment and it appears here alongside the sentence the merchant is shown.
+          </p>
         </div>
       )}
 

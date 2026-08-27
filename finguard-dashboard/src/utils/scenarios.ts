@@ -54,16 +54,22 @@ export const EMPTY_FORM: FormValues = {
  */
 export function toLocalInputValue(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
+  const seconds = date.getSeconds();
   return (
     `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
-    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}` +
+    // Emitted only when it carries information. UPI velocity attacks run at sub-minute
+    // spacing, so a simulator that cannot express seconds cannot demonstrate the very
+    // sequences the graph features exist to catch — but the everyday presets should not
+    // pick up a decorative ":00" for it.
+    (seconds ? `:${pad(seconds)}` : '')
   );
 }
 
 /** Today's date at a fixed wall-clock time, so a preset reads the same every run. */
-function todayAt(hour: number, minute: number): string {
+function todayAt(hour: number, minute: number, second = 0): string {
   const d = new Date();
-  d.setHours(hour, minute, 0, 0);
+  d.setHours(hour, minute, second, 0);
   return toLocalInputValue(d);
 }
 
@@ -129,7 +135,11 @@ export function buildScenarios(): Scenario[] {
     {
       id: 'rupee-one',
       label: 'Rs.1 test (2 legs)',
-      blurb: 'A Rs.1 "account check", then Rs.62,000 to the same receiver 43 seconds later. Watch leg 1 clear and leg 2 get held for the sequence, not the size.',
+      // The blurb used to promise "watch leg 1 clear". It never cleared: a Rs.1 probe to
+      // a zero-day VPA scores ~78% and is challenged. What the preset actually shows is
+      // better anyway — one risk score, two different actions, because the amount at
+      // stake is in the cost model.
+      blurb: 'A Rs.1 "account check", then Rs.62,000 to the same receiver 43 seconds later. Same pair, seconds apart: the probe is only challenged — a Rs.1 exposure is not worth holding — while the drain behind it is held outright.',
       hostile: true,
       steps: [
         {
@@ -151,7 +161,7 @@ export function buildScenarios(): Scenario[] {
             receiverVPA: 'verify.acct@paytm',
             amount: '62000',
             receiverVpaAgeDays: '0',
-            timestamp: todayAt(20, 15),
+            timestamp: todayAt(20, 15, 43),
             senderCity: 'Chennai',
             timeSinceLastTxnSec: '43',
           },

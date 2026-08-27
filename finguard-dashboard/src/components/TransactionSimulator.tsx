@@ -120,7 +120,9 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
         <legend className="nb-label" style={{ marginBottom: 8 }}>
           Replay a signature
         </legend>
-        <div className="flex flex-wrap gap-2">
+        {/* Two columns rather than flex-wrap: four presets wrapped 3-then-1 and left a
+            ragged gap under the last row. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {scenarios.map((scenario) => (
             <button
               key={scenario.id}
@@ -128,14 +130,27 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
               onClick={() => void runScenario(scenario)}
               disabled={isLoading}
               title={scenario.blurb}
-              className="nb-btn"
-              style={
-                scenario.hostile
-                  ? { background: 'var(--hold-fill)', color: '#0b0b0b' }
-                  : undefined
-              }
+              className="nb-btn flex items-center gap-2"
+              style={{ justifyContent: 'flex-start', textAlign: 'left' }}
             >
-              {scenario.label}
+              {/* These used to be filled solid in --hold-fill, which put the colour that
+                  means "this payment was held" onto a control that only loads a form.
+                  The swatch carries the same information without spending the semantic
+                  on chrome — and matches how the cost table marks an action. */}
+              <span
+                style={{
+                  width: 10,
+                  height: 10,
+                  flexShrink: 0,
+                  background: scenario.hostile ? 'var(--hold-fill)' : 'var(--accept-fill)',
+                  border: '1px solid var(--ink)',
+                }}
+                aria-hidden="true"
+              />
+              <span style={{ minWidth: 0 }}>{scenario.label}</span>
+              <span className="sr-only">
+                {scenario.hostile ? ' — scam signature' : ' — legitimate payment'}
+              </span>
             </button>
           ))}
         </div>
@@ -234,6 +249,9 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
           <input
             id="timestamp"
             type="datetime-local"
+            // Without this the control's step is 60s and it silently drops the seconds
+            // component of any value set on it.
+            step="1"
             value={formData.timestamp}
             onChange={(e) => update('timestamp', e.target.value)}
             className={FIELD_CLASS}
@@ -314,9 +332,18 @@ export function TransactionSimulator({ onSimulate, isLoading }: TransactionSimul
         >
           {isLoading ? (
             <span className="flex items-center justify-center">
-              <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-[var(--ink)]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              <svg
+                className="animate-spin"
+                style={{ width: 16, height: 16, marginRight: 9 }}
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                {/* 2px stroke, square cap — the same grid as every other glyph here.
+                    Tailwind's stock spinner is a 4px-stroke filled arc and sat visibly
+                    heavier than the icon set beside it. */}
+                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+                <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" />
               </svg>
               Scoring...
             </span>
