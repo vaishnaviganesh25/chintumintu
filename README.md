@@ -1,42 +1,103 @@
-# FinGuard — Merchant-Side Payment Risk, End to End
+<div align="center">
 
-Stops a merchant losing money to payment fraud, and defends the disputes that get
-through anyway. Every decision is priced in rupees, explained, recorded, and
-answerable months later — and the engine keeps scoring when its own model is gone.
+# FinGuard
 
-| | |
-| --- | --- |
-| **Detection** | PR-AUC 0.9979 on a test split grouped so no scam incident straddles the boundary |
-| **What it saves** | ₹99,548 of merchant loss per 20,000 payments, against ₹185,410 for a single block/allow threshold |
-| **Graph layer** | Fan-in and decayed collection velocity recover 60% of the ground lost by dropping account age — a signal a ring cannot age its way out of |
-| **Honesty** | Grouping the split cost real performance, 0.9955 → 0.9979, because the earlier figure was partly a property of the split. Every ablation is in the report |
-| **Resilience** | Four-rung degradation ladder; kill the model and it still scores, in 3 ms instead of 91 |
-| **Tests** | 272 Python + 43 TypeScript, including property-based |
+**Merchant-side payment risk — priced in rupees, explained, and answerable months later**
+
+[![CI](https://github.com/vaishnaviganesh25/chintumintu/actions/workflows/ci.yml/badge.svg)](https://github.com/vaishnaviganesh25/chintumintu/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React 19](https://img.shields.io/badge/react-19-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
+
+</div>
+
+FinGuard stops a merchant losing money to payment fraud, and defends the disputes that
+get through anyway. It is not a score in a notebook: every decision is **priced against
+the merchant's own cost structure**, explained with signed contributions, written to an
+append-only ledger, and replayable months later. When the model is unavailable the
+engine keeps scoring — and says so, instead of inventing a number.
 
 ```bash
-docker compose up --build     # dashboard :5173, API docs :8080/docs
+docker compose up --build      # dashboard :5173  ·  API docs :8080/docs
 ```
 
+---
 
-| Module | Script | Output |
-| --- | --- | --- |
-| 1. Synthetic data | `generate_upi_dataset.py` | `upi_synthetic_data.csv` |
-| 2. ML engine | `train_model.py` | `models/`, `reports/` |
-| 3. Explainable AI | `explain_model.py` | `reports/explanations/` |
-| 4. REST API | `main.py` | FastAPI service on port 8080 |
-| 5. Decision ledger | `audit_store.py` | `data/finguard_audit.db` |
-| 6. Chargeback responder | `chargeback_agent.py` | representment packets, LLM-drafted |
-| 7. Degradation ladder | `degradation.py` | keeps scoring when the model cannot |
-| 8. Graph layer | `graph_features.py` | fan-in, fan-out, collection velocity |
-| 9. Razorpay disputes | `razorpay_client.py` | real dispute entities, optional live client |
-| 10. Network reputation | `network_signals.py` | cross-merchant evidence, applied as an overlay |
-| — merchant economics | `merchant_policy.py` | the cost model every decision is priced in |
-| — dashboard | `finguard-dashboard/` | React + Vite UI on port 5173 |
-| — serving check | `predict_example.py` | console demo of the scoring path |
-| — test suite | `tests/` | 272 tests, `pytest` |
+## Highlights
+
+|  |  |
+| --- | --- |
+| **Detection** | PR-AUC **0.9979** on a test split grouped so no scam incident straddles the boundary |
+| **What it saves** | **₹99,548** of merchant loss per 20,000 payments, against **₹185,410** for a single block/allow threshold |
+| **Priced, not thresholded** | Each payment is costed as ACCEPT / CHALLENGE / HOLD and the cheapest wins — unless cross-merchant evidence escalates it, in which case the console says so. A threshold on a score is the baseline this beats, not the design |
+| **Graph layer** | Fan-in and decayed collection velocity recover **60%** of the ground lost by dropping account age — PR-AUC 0.8788 → 0.9506 |
+| **Honesty** | Grouping the split *cost* headline performance, and it stayed grouped. Every feature block has an ablation in the run report |
+| **Resilience** | Four rungs of degradation — kill the model and it still scores, marks itself `degraded`, and never fabricates a probability |
+| **Tested** | **277** Python + **74** TypeScript, including property-based tests and a packaging guard |
+
+## How it fits together
+
+```mermaid
+flowchart TB
+    subgraph build["Build time — run once"]
+        direction LR
+        G["generate_upi_dataset.py<br/>100k payments · 0.5% fraud"]
+        T["train_model.py<br/>threshold calibrated on cost"]
+        X["explain_model.py<br/>TreeSHAP, concept-level"]
+        G --> T --> X
+    end
+
+    subgraph serve["Every payment, at request time"]
+        direction LR
+        API["POST /analyze-transaction"]
+        GF["graph_features<br/>fan-in · decayed velocity"]
+        M["model + TreeSHAP"]
+        EC["merchant_policy<br/>price the three actions"]
+        NS["network_signals<br/>cross-merchant overlay"]
+        API --> GF --> M --> EC --> NS
+    end
+
+    LAD["degradation.py<br/>4 rungs · never invents a score"]
+    LED[("append-only ledger")]
+    DIS["razorpay_client<br/>dispute entities + evidence"]
+
+    X -.->|explainer| M
+    M -.->|model unavailable| LAD
+    LAD --> EC
+    NS --> LED --> DIS
+```
+
+The path that matters is the middle band. A probability is only an input: the merchant's
+cost structure turns it into an action, cross-merchant reputation can escalate that
+action, and the ledger records what happened so a dispute months later can be answered
+with the evidence that was actually used.
+
+## Modules
+
+| # | Module | Script | What it produces |
+| --- | --- | --- | --- |
+| 1 | Synthetic data | `generate_upi_dataset.py` | `upi_synthetic_data.csv` |
+| 2 | ML engine | `train_model.py` | `models/`, `reports/` |
+| 3 | Explainable AI | `explain_model.py` | `reports/explanations/` |
+| 4 | REST API | `main.py` | FastAPI service on `:8080` |
+| 5 | Decision ledger | `audit_store.py` | `data/finguard_audit.db` |
+| 6 | Chargeback responder | `chargeback_agent.py` | representment packets, LLM-drafted |
+| 7 | Degradation ladder | `degradation.py` | keeps scoring when the model cannot |
+| 8 | Graph layer | `graph_features.py` | fan-in, fan-out, collection velocity |
+| 9 | Razorpay disputes | `razorpay_client.py` | dispute entities, optional live client |
+| 10 | Network reputation | `network_signals.py` | cross-merchant evidence, as an overlay |
+| — | Merchant economics | `merchant_policy.py` | the cost model every decision is priced in |
+| — | Dashboard | `finguard-dashboard/` | React + Vite console on `:5173` |
+| — | Serving check | `predict_example.py` | proves the saved artifacts round-trip |
+
+## Getting started
+
+The one-liner above builds and runs everything. To work on it directly:
 
 ```bash
 pip install -r requirements.txt
+
 python generate_upi_dataset.py    # ~30 s
 python train_model.py             # ~110 s
 python explain_model.py           # ~100 s
@@ -45,20 +106,53 @@ python main.py                    # serves the API on http://localhost:8080
 ```
 
 ```bash
-pip install -r requirements-dev.txt
-pytest                            # 180 tests
-pytest -m "not slow"              # 235 of them, no model artifacts needed
+cd finguard-dashboard
+npm install
+npm run dev                       # console on http://localhost:5173
 ```
 
-> **Environment warning.** The numpy and pandas bounds in `requirements.txt` are
-> load-bearing. SHAP needs numba, numba caps numpy below 2.5, and pandas 3.x with
-> numpy 2.4 **segfaults** on ordinary `.loc` indexing — a hard process crash rather
-> than an exception. pandas 2.3 + numpy 2.4 is the coherent combination. Do not
-> raise those upper bounds without rerunning all three modules end to end.
+### Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest                            # 277 tests
+pytest -m "not slow"              # 240 of them, no model artifacts needed
+
+cd finguard-dashboard && npm run test:run    # 74 tests
+```
+
+> [!WARNING]
+> **The dependency bounds in `requirements.txt` are load-bearing.** SHAP needs numba,
+> numba caps numpy below 2.5, and pandas 3.x with numpy 2.4 **segfaults** on ordinary
+> `.loc` indexing — a hard process crash rather than an exception. pandas 2.3 + numpy 2.4
+> is the coherent combination. Do not raise those upper bounds without rerunning all
+> three modules end to end.
+
+<details>
+<summary><b>Contents</b> — the rest of this file is the engineering record</summary>
+
+- [Module 1 — Synthetic UPI Transaction Dataset](#module-1--synthetic-upi-transaction-dataset)
+- [Module 2 — Predictive ML Engine](#module-2--predictive-ml-engine)
+- [Module 3 — Explainable AI](#module-3--explainable-ai)
+- [Module 4 — REST API](#module-4--rest-api)
+- [Module 5 — Decision ledger](#module-5--decision-ledger)
+- [What the group-aware split cost](#what-the-group-aware-split-cost)
+- [Merchant economics — what a decision actually costs](#merchant-economics--what-a-decision-actually-costs)
+- [Module 6 — Chargeback evidence responder](#module-6--chargeback-evidence-responder)
+- [Module 7 — The degradation ladder](#module-7--the-degradation-ladder)
+- [Module 8 — The graph layer](#module-8--the-graph-layer)
+- [Module 9 — Razorpay-shaped disputes](#module-9--razorpay-shaped-disputes)
+- [Module 10 — Cross-merchant reputation, and what Vulcan changed here](#module-10--cross-merchant-reputation-and-what-vulcan-changed-here)
+- [The console](#the-console)
+- [Containers and CI](#containers-and-ci)
+- [Dashboard — React frontend](#dashboard--react-frontend)
+- [Tests](#tests)
+
+</details>
 
 ---
 
-# Module 1 — Synthetic UPI Transaction Dataset
+## Module 1 — Synthetic UPI Transaction Dataset
 
 A seeded generator that produces 100,000 realistic Indian UPI transactions with 0.5%
 fraud, injected as three scam patterns actually seen in the Indian payments ecosystem.
@@ -66,7 +160,7 @@ fraud, injected as three scam patterns actually seen in the Indian payments ecos
 Real UPI data is confidential, so this stands in as a faithful substitute for
 model development, threshold tuning, and SHAP explainability work.
 
-## Setup
+### Setup
 
 ```bash
 python generate_upi_dataset.py
@@ -75,7 +169,7 @@ python generate_upi_dataset.py
 Runtime is roughly 30 seconds and the output is `upi_synthetic_data.csv` (~13 MB).
 `SEED = 42` makes every run byte-identical; change it for a fresh sample.
 
-## Schema
+### Schema
 
 | Column | Type | Description |
 | --- | --- | --- |
@@ -93,7 +187,7 @@ Runtime is roughly 30 seconds and the output is `upi_synthetic_data.csv` (~13 MB
 > **Drop `fraud_pattern` before training.** It is a label-derived column, kept only
 > so you can score recall per scam type and check what the explainer attributes to each.
 
-## Legitimate behaviour (99,500 rows)
+### Legitimate behaviour (99,500 rows)
 
 - **70% micro-payments, ₹10–₹500** — chai, autos, kirana stores; clustered on round
   values (₹10/₹20/₹50/₹100/₹200) the way real UPI spending is.
@@ -108,7 +202,7 @@ Runtime is roughly 30 seconds and the output is `upi_synthetic_data.csv` (~13 MB
   code). Payments cluster in the first days after signup, so roughly 4,500 legitimate
   rows land on a receiver 2 days old or younger. See below for why this matters.
 
-## Fraud signatures (500 rows, 0.5%)
+### Fraud signatures (500 rows, 0.5%)
 
 | Pattern | Rows | Signature |
 | --- | --- | --- |
@@ -116,7 +210,7 @@ Runtime is roughly 30 seconds and the output is `upi_synthetic_data.csv` (~13 MB
 | `new_vpa_velocity` | 150 (30 mules × 5) | A mule VPA with `receiver_vpa_age_days = 0` collects 5 transfers of ₹15,000–₹90,000 from 3 victims inside minutes; two victims send twice ("the refund failed, send again"). |
 | `odd_hour_phishing` | 150 | ₹20,000+ between 01:00 and 04:00 to a recently created VPA — credential compromise or a screen-sharing scam draining an account overnight. |
 
-## Deliberate class overlap
+### Deliberate class overlap
 
 The generator plants legitimate rows that *look* suspicious on a single feature, so
 the labels are not separable by one threshold:
@@ -134,7 +228,7 @@ the labels are not separable by one threshold:
 Tune with `LEGIT_TINY_PROBE_SHARE`, `LEGIT_BIG_TICKET_SHARE`, `NEW_ADOPTER_TXN_SHARE`
 and `NEW_ADOPTER_BIG_TICKET_SHARE`; set them to `0.0` for a strictly clean split.
 
-### Why the new-VPA overlap is sized the way it is
+#### Why the new-VPA overlap is sized the way it is
 
 The first version of this generator made `receiver_vpa_age_days` a giveaway: every
 fraudulent receiver was 0–20 days old and almost every legitimate one was 150+, so
@@ -162,7 +256,7 @@ later, ₹20,000 moving at 3 AM.
 Every run prints a validation report covering row counts, the fraud rate, per-pattern
 integrity checks, these overlap counts, and the precision table above.
 
-## Notes and limitations
+### Notes and limitations
 
 - Amounts are capped at ₹99,999 for fraud and ₹200,000 for legitimate big-ticket
   payments, in line with UPI per-transaction limits.
@@ -174,13 +268,13 @@ integrity checks, these overlap counts, and the precision table above.
 
 ---
 
-# Module 2 — Predictive ML Engine
+## Module 2 — Predictive ML Engine
 
 `train_model.py` engineers features, trains and compares XGBoost against Random
 Forest, calibrates a decision threshold, and serialises the winner for real-time
 scoring. Everything it prints is also written to `reports/evaluation_report.txt`.
 
-## Pipeline
+### Pipeline
 
 1. **Feature engineering** — 33 features from 6 raw columns: temporal
    (`hour_of_day`, `day_of_week`, `is_night_txn`, cyclical hour encoding), amount
@@ -201,62 +295,81 @@ scoring. Everything it prints is also written to `reports/evaluation_report.txt`
 5. **Threshold calibration** — on out-of-fold probabilities, never the test set.
 6. **Artifacts** — `models/` and `reports/`.
 
-## Splits
+### Splits
 
 Stratified **64 / 16 / 20** train / validation / test. The validation slice does the
 two jobs that must never touch the test set: XGBoost early stopping and threshold
 calibration. Calibrating a threshold on the rows you then report it on is the most
 common way fraud projects overstate their precision.
 
-## Results
+### Results
 
 Random Forest wins on cross-validated PR-AUC and is the shipped model.
 
 | Model | PR-AUC (CV) | PR-AUC (test) | ROC-AUC (test) | F1 (test) |
 | --- | --- | --- | --- | --- |
-| Random Forest | **0.9873 ± 0.0043** | 0.9955 | 1.0000 | 0.9495 |
-| XGBoost | 0.9872 ± 0.0046 | 0.9946 | 1.0000 | 0.9596 |
+| **Random Forest** | **0.9973 ± 0.0016** | **0.9979** | 1.0000 | 0.9474 |
+| XGBoost | 0.9955 ± 0.0038 | 0.9931 | 1.0000 | 0.9140 |
 
-The two models are now within one standard deviation of each other, which is the
-honest picture; the earlier run separated them only because the data was easy enough
-that Random Forest scored a literal 1.0000 in every fold.
+The gap between them is 0.0018, well inside XGBoost's own fold spread — so this is a
+preference, not a verdict. Random Forest ships because its folds are tighter, not
+because it is meaningfully better.
 
-Recall by scam signature at the shipped threshold: 100% on all four legs (new-VPA
-velocity, odd-hour phishing, and both legs of the ₹1 test), at 67% precision.
+At the shipped cost-calibrated threshold of **0.2682**, the held-out set gives
+**precision 0.8919, recall 0.9900**: 99 of 100 frauds caught for 12 false alarms across
+19,900 legitimate payments. The report prints the default-threshold confusion matrix
+beside it, and notes plainly that on this particular split 0.50 happens to score higher —
+the calibrated point is chosen on expected rupees, not on F1.
 
-## Three findings worth reading before trusting those numbers
+Recall by scam signature, at that threshold:
+
+| Signature | Caught | Recall | Value at risk |
+| --- | --- | --- | --- |
+| `odd_hour_phishing` | 30 / 30 | 100% | ₹1,203,678 |
+| `rupee_1_test` — the ₹1 probe | 20 / 20 | 100% | ₹20 |
+| `rupee_1_test` — the drain behind it | 20 / 20 | 100% | ₹1,369,795 |
+| `new_vpa_velocity` | 29 / 30 | 96.7% | ₹1,744,701 |
+
+### Three findings worth reading before trusting those numbers
 
 **Account age is a strong feature, but no longer a shortcut.** `receiver_vpa_age_days`
 and its derivatives are still the largest single block of importance, and they should
 be — every fraudulent receiver in this data really is 0–20 days old. What changed is
-that Module 1 now routes ~6% of legitimate traffic to brand-new VPAs, so the rule
-"receiver is new" is only ~7% precise on its own and the amount-plus-age pair tops out
-at 62%. The built-in ablation retrains without the age features: PR-AUC falls
-0.9955 → 0.9520 and recall 1.00 → 0.92. **That lower number is the better guide to
-real-world behaviour**, where account age is noisy and often missing.
+that Module 1 routes a slice of legitimate traffic to brand-new VPAs, so the rule
+"receiver is new" is only ~7% precise on its own, and even amount-plus-age tops out at
+62%. The built-in ablation retrains without the age block: PR-AUC falls **0.9979 →
+0.9506**.
 
-**Scam incidents straddle the train/test boundary.** A stratified random split cuts
-through incidents: the ₹1 probe can land in train while its large follow-up lands in
-test, and one mule VPA gets scattered across both. 59% of test fraud rows share a
-receiver with training fraud. Recall is currently 100% on both warm and cold
-receivers, so the effect is not visible in this run — but it is a property of the
-split, not of the model, and a `GroupKFold` on `receiver_vpa` would remove it.
+Read PR-AUC there, not recall. Each ablation row re-calibrates its threshold on its own
+out-of-fold probabilities, so the rows sit at different operating points and the recall
+column is not comparable between them — it moves while precision moves the other way,
+which is the threshold shifting rather than the model getting worse. PR-AUC is
+threshold-free, which is exactly why it is the column to compare. **The age-ablated row
+is the one to plan against**, because real account age is noisy and often missing.
+
+**Scam incidents used to straddle the train/test boundary — the split now groups on
+them.** A stratified random split cuts through an incident: the ₹1 probe lands in train
+while its drain lands in test, and one mule VPA is scattered across both. Under that
+split 59 of 100 test frauds shared a receiver with training fraud, so the model was
+partly being asked to recognise a receiver it had already been taught. Module 1 emits a
+`ring_id` on every fraud row and the split groups on it, which takes that to 0 of 100.
+What it cost is measured in [What the group-aware split cost](#what-the-group-aware-split-cost).
 
 **The obvious threshold policy is not the profitable one here.** "Maximise precision
 subject to recall ≥ 90%" is the natural reading of the requirement, but the 90% floor
 sits below what this model achieves, so the rule is free to climb the threshold and
-trade fraud for precision. Out-of-fold it buys +27 points of precision and 168 fewer
-alarms by letting **35 of 400 fraud rows through**. Charging each missed fraud its
-actual amount and each false alarm a ₹150 review, that is ₹824,550 of expected loss
-against ₹27,450 for the cost-minimising point — a 30× difference.
+trade fraud for precision. Out-of-fold it buys **+13.7 points of precision and 64 fewer
+alarms** by letting **25 more of 400 fraud rows through**. Charging each missed fraud its
+actual amount and each false alarm a ₹150 review, that is **₹1,151,152** of expected loss
+against **₹25,982** at the cost-minimising point — a 44× difference.
 
 `train_model.py` therefore implements both rules and ships the cost-minimising one
-(`THRESHOLD_POLICY = "cost"`). Set it to `"precision_at_recall"` for the literal
-policy; the report prints both either way, so the trade-off is always visible.
-Raising `TARGET_RECALL` closer to what the model can actually deliver has much the
-same effect as switching policy.
+(`THRESHOLD_POLICY = "cost"`). Set it to `"precision_at_recall"` for the literal policy;
+the report prints both either way, so the trade-off is always visible. Raising
+`TARGET_RECALL` closer to what the model can actually deliver has much the same effect
+as switching policy.
 
-## Artifacts
+### Artifacts
 
 | File | Contents |
 | --- | --- |
@@ -271,7 +384,7 @@ same effect as switching policy.
 | `reports/confusion_matrices.png` | Default versus calibrated |
 | `reports/feature_importance.png` | Top 20 features |
 
-## Scoring a transaction (Module 3)
+### Scoring a transaction (Module 3)
 
 `engineer_features` is a pure, label-free function and everything else sits behind a
 `__main__` guard, so importing the module does not retrain anything.
@@ -297,7 +410,7 @@ streaming context; they are not free.
 
 ---
 
-# Module 3 — Explainable AI
+## Module 3 — Explainable AI
 
 `explain_model.py` turns the classifier from a score into a defensible decision, at
 three levels of audience.
@@ -366,7 +479,7 @@ the model flagged (₹35,334 to a VPA six days old, following a much smaller pay
 A wrong alert an analyst can interrogate is cleared in seconds; an unexplained score
 has to be taken on faith.
 
-## Module 3 artifacts
+### Module 3 artifacts
 
 | File | Contents |
 | --- | --- |
@@ -379,7 +492,7 @@ has to be taken on faith.
 
 ---
 
-# Module 4 — REST API
+## Module 4 — REST API
 
 `main.py` serves the Module 2 classifier and the Module 3 explanation layer over HTTP
 for the React dashboard.
@@ -394,7 +507,7 @@ The service listens on `http://localhost:8080`, with interactive docs at
 open to `http://localhost:5173` and `http://127.0.0.1:5173` (both spellings, because a
 browser sends whichever is in the address bar and they are different origins).
 
-## `POST /api/v1/analyze-transaction`
+### `POST /api/v1/analyze-transaction`
 
 Only three fields are required; the rest is optional context.
 
@@ -434,7 +547,7 @@ driver whichever way it points.
 a naive 0.5. A payment can therefore be blocked at 20% probability — deliberate, since
 a missed mule transfer costs its full value and a false alarm costs one ₹150 review.
 
-## Two things about the design worth knowing
+### Two things about the design worth knowing
 
 **The API keeps a short per-sender history, and it has to.** Four features are
 backward-looking: the gap since the sender's last payment, that payment's size, the
@@ -468,7 +581,7 @@ joblib's per-call thread pool costs more than the traversal. Measured on this mo
 `n_jobs = 1` on the in-memory copy at startup, taking the endpoint from ~164 ms to
 ~47 ms of compute (69–113 ms over HTTP). The artifact on disk is untouched.
 
-## Other endpoints
+### Other endpoints
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -492,7 +605,7 @@ that fallback presents as a CORS failure that looks like a broken backend.
 
 ---
 
-# Module 5 — Decision ledger
+## Module 5 — Decision ledger
 
 `audit_store.py` writes every score to an append-only SQLite ledger before the
 response leaves the process, together with the model version that produced it and
@@ -518,7 +631,7 @@ curl -s localhost:8080/api/v1/decisions/dec-8139f9c6017841a1 | jq
 }
 ```
 
-## Three properties this file exists to guarantee
+### Three properties this file exists to guarantee
 
 **The decision record is immutable.** `decisions` is written once and never updated.
 Analyst outcomes land in a separate `dispositions` table with their own rows and
@@ -538,7 +651,7 @@ gets a verdict — the alternative is a fraud engine that stops detecting fraud 
 a log file broke. `/api/v1/health` reports `audit_ledger: degraded` so the failure is
 visible rather than silent.
 
-## Precision after deployment
+### Precision after deployment
 
 `GET /api/v1/stats` reports precision over **analyst dispositions only**. In
 production there are no labels, only outcomes someone eventually confirms, so alerts
@@ -553,7 +666,7 @@ five methods wide to keep that swap cheap.
 
 ---
 
-# What the group-aware split cost
+## What the group-aware split cost
 
 Module 1 emits a `ring_id` on every fraud row: both legs of a ₹1 test, all five
 transfers into one mule. The split groups on it, so no scam incident straddles the
@@ -561,15 +674,23 @@ train/test boundary.
 
 | | Stratified split | Grouped on incident |
 | --- | --- | --- |
-| Test fraud sharing a receiver with train fraud | 59 / 100 | **0 / 100** |
-| PR-AUC (test) | 0.9955 | **0.9802** |
-| Recall on receivers never seen in training | 100% | **99%** |
-| Cross-validated PR-AUC | 0.9873 | **0.9844** |
+| Test fraud sharing a receiver with training fraud | 59 / 100 | **0 / 100** |
+| Test fraud on a receiver never seen in training | 41 / 100 | **100 / 100** |
+| PR-AUC (test) | 0.9997 | **0.9979** |
+| Recall on those unseen receivers | 100% | **99%** |
+| Cross-validated PR-AUC | 0.9973 ± 0.0027 | **0.9973 ± 0.0016** |
 
-Every number got worse, and that is the point. Under a stratified split the ₹1 probe
-lands in train while its drain lands in test, and one mule VPA is scattered across
-both — so the model recognises a receiver it has already been taught is fraudulent.
-The earlier figures were partly a property of the split rather than of the model.
+The headline figure falls, but the cohort it is measured on changes more than the figure
+does — and that is the part worth reading. Under a stratified split the ₹1 probe lands in
+train while its drain lands in test, and one mule VPA is scattered across both, so 59 of
+100 test frauds arrive at a receiver the model has already been taught is fraudulent.
+Only 41 rows are a real test of generalisation. Grouping makes all 100 real, and the
+`100%` recall becomes `99%` measured against two and a half times as many rows.
+
+Cross-validated PR-AUC does not move at all — 0.9973 under both — but the spread across
+folds tightens from ±0.0027 to ±0.0016. So the leak shows up as variance between folds
+rather than as a flattered mean, which is the more useful thing to know: a single CV
+number would have hidden it entirely.
 
 `GROUP_AWARE_SPLIT = False` reproduces the old behaviour if you want to see the gap
 yourself. The cross-validation inside model selection and threshold calibration is
@@ -577,7 +698,7 @@ grouped too; a group-aware outer split undone by a row-shuffled CV would be thea
 
 ---
 
-# Merchant economics — what a decision actually costs
+## Merchant economics — what a decision actually costs
 
 `merchant_policy.py` is where the bank-side framing this project started from gets
 corrected. FinGuard scores payments for a **merchant on a gateway**, and that changes
@@ -600,15 +721,19 @@ allows; a two-outcome policy leaves that option on the table.
 
 | Policy | Total cost | Per txn | Held | Challenged | Fraud through |
 | --- | --- | --- | --- | --- | --- |
-| block / allow at 0.1541 | ₹244,672 | ₹12.23 | 130 | — | 1 |
-| **accept / step-up / hold** | **₹180,472** | **₹9.02** | 75 | 1,231 | 0 |
+| block / allow at 0.2682 | ₹185,410 | ₹9.27 | 111 | — | 1 |
+| **accept / step-up / hold** | **₹99,548** | **₹4.98** | 81 | 735 | 0 |
 
-Adding the challenge action saves **₹64,200 per 20,000 payments — 26% of merchant
-loss** — while cutting manual holds from 130 to 75 *and* catching the one fraud the
-single threshold let through. The saving was 67% before the split was grouped; most of
-that gap was the leak, not the policy.
+Adding the challenge action saves **₹85,862 per 20,000 payments — 46% of merchant
+loss** — while cutting manual holds from 111 to 81 *and* catching the one fraud the
+single threshold let through.
 
-## The step-up budget, and why it exists
+Run ungrouped, the same comparison reads 79%. The two are not directly comparable and
+the larger number is not the better one: each run calibrates its own threshold, and the
+ungrouped baseline landed at 0.1043 against 0.2682 here, so it is a different — and much
+more trigger-happy — block/allow policy being beaten.
+
+### The step-up budget, and why it exists
 
 Minimising cost row by row, a challenge is so cheap that the policy will challenge
 anything carrying more than a fraction of a percent of risk. On a book with diffuse
@@ -621,7 +746,7 @@ of the allowance, with headroom left.
 That failure was found by a test, not by inspection. `test_the_step_up_budget_is_never_exceeded`
 exists because of it.
 
-## The dispute covenant, and why it does nothing here
+### The dispute covenant, and why it does nothing here
 
 Card networks put merchants into a remediation programme above a **1.5% ratio** — Visa
 VAMP since 1 April 2026, down from 2.2%, and Mastercard ECM at the same 1.5% once a
@@ -645,7 +770,7 @@ begins to bind above **18.8% prevalence** at the 92% recall the age-ablated mode
 achieves. It is in the report because it is the real constraint in production, not
 because it is doing work on this dataset.
 
-## Same model, different merchant
+### Same model, different merchant
 
 No threshold constant appears in the decision. The action boundaries fall out of the
 cost curves, so the same model yields a different policy per merchant:
@@ -663,7 +788,7 @@ declined order costs the reseller much less. `python merchant_policy.py` prints 
 
 ---
 
-# Module 6 — Chargeback evidence responder
+## Module 6 — Chargeback evidence responder
 
 Detection stops a loss before it happens. `chargeback_agent.py` handles the ones that
 got through: it reconstructs the case from the decision ledger and drafts the
@@ -701,7 +826,7 @@ not validate — each falls back to a packet built from the same evidence, flagg
 deadline; an ops team that gets nothing because a third-party API was down has been
 failed by its tooling.
 
-## Providers
+### Providers
 
 Pluggable, chosen by whichever key is present — there is no provider setting to fall
 out of step with the environment:
@@ -720,7 +845,7 @@ to run them.
 
 ---
 
-# Module 7 — The degradation ladder
+## Module 7 — The degradation ladder
 
 A fraud engine that stops scoring is worse than one that scores badly. If the model
 will not load, or SHAP throws, or the process starts before its artifacts do, the
@@ -753,7 +878,7 @@ The rule on the `RULES` rung is not invented for the occasion. It is the one Mod
 measures: **62.4% precision**, against 7.1% for account age alone. A poor detector and
 a good fallback, and the report states both numbers.
 
-## Watching it happen
+### Watching it happen
 
 ```bash
 FINGUARD_ENABLE_CHAOS=1 python main.py
@@ -771,7 +896,7 @@ currently do*.
 
 ---
 
-# Module 8 — The graph layer
+## Module 8 — The graph layer
 
 `new_vpa_velocity` is a star: three victims paying one account created that morning,
 inside a few minutes. Until now the model could only see it side-on — one row at a
@@ -789,7 +914,7 @@ the structure, not the structure.
 | `receiver_is_hub` | 10 min | Fan-in at or above 3 — the shape the scam has |
 | `sender_fanout_1h` | 1 h | The mirror pattern: a compromised account spraying money |
 
-## What it is worth
+### What it is worth
 
 | Feature set | PR-AUC | Recall | Precision |
 | --- | --- | --- | --- |
@@ -812,7 +937,7 @@ receiving account, so a fraudster defeats it by ageing a mule for three weeks. F
 is a property of the ring's behaviour: collecting from several victims in minutes is
 the thing the scam has to do to be the scam. A ring cannot age its way out of it.
 
-## Strictly backward-looking, and you can watch it
+### Strictly backward-looking, and you can watch it
 
 Every window is `[t − w, t]`, closed at the current payment. Nothing reads a row that
 arrives later — which is what makes the feature computable at serving time and the
@@ -830,7 +955,7 @@ The first payment genuinely looks ordinary, and the sign flips as the ring assem
 The model is not being shown the future; it is watching the star form. The **Ring
 graph** view in the dashboard replays exactly this, transfer by transfer.
 
-## The check that matters: are they used only where they should be?
+### The check that matters: are they used only where they should be?
 
 A feature that improves the headline by firing everywhere has not learned the scam, it
 has learned a shortcut. Module 3's per-signature attribution answers this directly, and
@@ -867,7 +992,7 @@ value, and nothing would raise.
 
 ---
 
-# Module 9 — Razorpay-shaped disputes
+## Module 9 — Razorpay-shaped disputes
 
 The disputes used to be FinGuard's own invention. They are now Razorpay's `dispute`
 entity, field for field — `id`, `payment_id`, `amount` in **paise**, `reason_code`,
@@ -889,7 +1014,7 @@ required, so letting a language model pick it meant letting it decide what evide
 was required — backwards, and non-reproducible. Keyword triage does it now, and the
 model fills the fields the code selects.
 
-## Do you need keys from Razorpay? No
+### Do you need keys from Razorpay? No
 
 Their Disputes API exposes fetch-all, fetch-by-id, accept and contest. There is **no
 create endpoint**, because disputes originate at the issuer or the network — a merchant
@@ -901,7 +1026,7 @@ demo nothing.
 reported on `/api/v1/health/deep`, so anyone demoing can see at a glance that they are
 pointed at test mode.
 
-## Amounts are in paise, once
+### Amounts are in paise, once
 
 Razorpay counts integer subunits; the model, the cost policy and every report here
 count rupees. Mixing them is a factor-of-100 error that looks entirely plausible in a
@@ -911,7 +1036,7 @@ dispute one paisa short of the payment it contests gets rejected.
 
 ---
 
-# Module 10 — Cross-merchant reputation, and what Vulcan changed here
+## Module 10 — Cross-merchant reputation, and what Vulcan changed here
 
 Razorpay announced **Vulcan** on 18 August 2026: a domain-specific transformer for
 payments, trained on ~3 trillion data points across 4 billion transactions, reading
@@ -922,7 +1047,7 @@ fraudulent or disputed transactions identified**, 8–10% better payment success
 
 Two things in that announcement changed this repository.
 
-## What it exposed: a payer nobody here could see
+### What it exposed: a payer nobody here could see
 
 Vulcan's second pillar is the one no individual merchant can do for itself —
 *"spots fraud visible only across merchants, flagging a stolen card the moment it's
@@ -964,7 +1089,7 @@ Three restraints keep this from becoming a blacklist nobody approved:
   every new customer, so treating it as positive evidence would score first-time
   buyers as riskier than returning ones — wrong, and quietly discriminatory.
 
-## What it exposed second: a seam in this project's own features
+### What it exposed second: a seam in this project's own features
 
 Razorpay disclosed that Vulcan's attention is **intra-transaction, field-to-field** — a
 set transformer reading every field against every other, permutation-invariant by
@@ -1008,7 +1133,7 @@ increments on arrival, one update per transaction, the same as a counter.
 rather than quietly fixed, so the limit is documented, and a property test checks that
 *no* pacing produces a cliff in the decayed measure.
 
-## Where this project sits relative to Vulcan
+### Where this project sits relative to Vulcan
 
 Not as a competitor — the comparison would be absurd, and claiming it would be worse.
 Vulcan is a foundation model over consortium-scale data; this is one engineer's
@@ -1036,7 +1161,7 @@ features are windowed or decayed, because FinGuard's demonstrably were.*
 
 ---
 
-# The console
+## The console
 
 Four views behind a persistent rail: **Simulator**, **Fraud desk**, **Ring graph**,
 **Model card**.
@@ -1067,7 +1192,7 @@ victim appears.
 
 ---
 
-# Running it
+## Containers and CI
 
 ```bash
 docker compose up --build
@@ -1085,7 +1210,7 @@ explain, `predict_example.py`, both Docker builds — on `main`.
 
 ---
 
-# Dashboard — React frontend
+## Dashboard — React frontend
 
 `finguard-dashboard/` is a Vite + React + TypeScript app that calls the Module 4 API.
 
@@ -1103,7 +1228,7 @@ every response before React sees it, and translates each failure into something
 actionable — an unreachable API says so and names the command to start it, rather than
 surfacing the browser's bare "Failed to fetch".
 
-## Reading the SHAP chart
+### Reading the SHAP chart
 
 The chart is diverging, not a ranked list of percentages, because real SHAP values are
 **signed**: red bars pushed the transaction towards fraud, green bars argued against.
@@ -1115,7 +1240,7 @@ Similarly, the risk gauge takes its colour from the decision, not from a fixed
 percentage band. The shipped threshold is 0.1230, so a payment can be blocked at 20%
 risk — a gauge that turned green below 40% would contradict the BLOCKED badge above it.
 
-## Replaying a signature
+### Replaying a signature
 
 The form posts every field the API accepts — sender, receiver, amount, receiver VPA
 age, transaction time, sender city, and the gap since the sender's last payment. Two
@@ -1136,13 +1261,13 @@ leg 1 clear and leg 2 get held citing *gap since the sender's previous payment* 
 
 ---
 
-# Tests
+## Tests
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # 272 tests
-pytest -m "not slow"       # 235 of them; the rest need models/ on disk
-cd finguard-dashboard && npm run test:run    # 43 tests
+pytest                     # 277 tests
+pytest -m "not slow"       # 240 of them; the rest need models/ on disk
+cd finguard-dashboard && npm run test:run    # 74 tests
 ```
 
 | File | Covers |
@@ -1157,8 +1282,13 @@ cd finguard-dashboard && npm run test:run    # 43 tests
 | `tests/test_graph_features.py` | Window edges, and that no window ever reads forward |
 | `tests/test_razorpay_client.py` | Entity shape, paise conversion, reason triage |
 | `tests/test_network_signals.py` | What the consortium layer must refuse to do |
+| `tests/test_packaging.py` | Every module the image imports is a module the image copies |
 | `src/utils/scenarios.test.ts` | Every demo preset still produces the signature it claims |
 | `src/utils/validation.test.ts` | Client-side rules, kept in step with the API's validators |
+| `src/services/fraudApi.test.ts` | Response parsing, including fields an older backend omits |
+| `src/services/opsApi.test.ts` | A request the app itself cancelled is not a failure to report |
+| `src/components/EvaluationPanel.test.tsx` | The verdict readout, and that the costs never contradict the action |
+| `src/components/XAIPanel.test.tsx` | The cited method, and that its references do not drift |
 
 The suite is deliberately weighted towards properties rather than examples, because
 the failures that matter here are silent. `engineer_features` is called from three
@@ -1168,7 +1298,7 @@ starts scoring production traffic against a slightly different feature space tha
 was fitted on, and the only symptom is an alert-rate drift that looks like the world
 changing rather than a bug.
 
-Eight real defects were found by writing these, all now fixed:
+Seven real defects were found by writing these, all now fixed:
 
 - **`split_feature_types` misclassified an all-null column as binary.**
   `dropna().isin([0,1]).all()` returns `True` on an empty Series, so a single row
@@ -1189,8 +1319,6 @@ Eight real defects were found by writing these, all now fixed:
 - **The alert queue silently emptied.** `recent_decisions` filtered on
   `decision = 'BLOCKED'`, which matched nothing the moment the API began emitting
   three actions. An empty queue reads as a quiet day, not a broken filter.
-- **Two analyst dispositions in the same second ordered arbitrarily** — and the stats
-  join counted one decision twice. Ordering now breaks the tie on `rowid`.
 - **`prev_amount_ratio` was `amount / (0 + 1)` on a first payment** — the transaction
   amount itself, and the largest value the feature can take. A first-time payer's
   ordinary ₹35,334 transfer arrived at the model looking like a 35,334× jump in
