@@ -1,11 +1,11 @@
 [
   {
     "signature": "rupee_1_test (probe leg)",
-    "transaction_id": "6bc5caf7-5055-4469-8b57-aa0f918f5755",
+    "transaction_id": "3f8bd643-eef4-4985-8f42-5c2f5f12ff18",
     "amount": 1.0,
     "timestamp": "2026-07-17 13:03:53",
     "receiver_vpa_age_days": 1,
-    "probability": 0.9718466672349946,
+    "probability": 0.9743887992487856,
     "decision": "BLOCK",
     "reasons": [
       "age of the receiving UPI ID (1 day old)",
@@ -15,11 +15,11 @@
   },
   {
     "signature": "rupee_1_test (large leg)",
-    "transaction_id": "288a2940-a6f6-444f-b9fe-a39736648099",
+    "transaction_id": "e085528d-0276-46df-9402-164153ad01f6",
     "amount": 13500.0,
     "timestamp": "2026-08-01 06:31:45",
     "receiver_vpa_age_days": 0,
-    "probability": 0.9441360358595949,
+    "probability": 0.939323972376711,
     "decision": "BLOCK",
     "reasons": [
       "age of the receiving UPI ID (created today)",
@@ -29,11 +29,11 @@
   },
   {
     "signature": "new_vpa_velocity",
-    "transaction_id": "face2db1-5be9-40bc-9bd5-8ce54864ce37",
+    "transaction_id": "f2e37349-2d78-4e9d-a131-44568fe150b8",
     "amount": 70005.0,
     "timestamp": "2026-07-13 07:25:03",
     "receiver_vpa_age_days": 0,
-    "probability": 0.9321337538907274,
+    "probability": 0.9421649425807088,
     "decision": "BLOCK",
     "reasons": [
       "age of the receiving UPI ID (created today)",
@@ -43,11 +43,11 @@
   },
   {
     "signature": "odd_hour_phishing",
-    "transaction_id": "78af5f09-3f39-463e-80ba-07014d76e18a",
+    "transaction_id": "e3fb9bc7-11fc-4eb9-9ce8-6f302c47f68c",
     "amount": 25393.08,
     "timestamp": "2026-07-25 03:45:20",
     "receiver_vpa_age_days": 9,
-    "probability": 0.9171580813301478,
+    "probability": 0.9670470883596047,
     "decision": "BLOCK",
     "reasons": [
       "transaction amount (Rs.25,393)",
@@ -57,16 +57,16 @@
   },
   {
     "signature": "false_positive",
-    "transaction_id": "905a6baa-5ae7-44ef-ab4f-998e523475a5",
+    "transaction_id": "db8813ce-bfdd-44b8-ab9d-67eedddb37e3",
     "amount": 35333.73,
     "timestamp": "2026-07-11 09:11:28",
     "receiver_vpa_age_days": 6,
-    "probability": 0.35599825686928716,
+    "probability": 0.3536362670919352,
     "decision": "BLOCK",
     "reasons": [
       "transaction amount (Rs.35,334)",
-      "how much this account has just collected (Rs.35,334 in 10 minutes)",
-      "size of the sender's previous payment (Rs.0)"
+      "size of the sender's previous payment (Rs.0)",
+      "how much this account has just collected (Rs.35,334 in 10 minutes)"
     ]
   }
 ]

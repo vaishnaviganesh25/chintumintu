@@ -11,6 +11,7 @@ world changing rather than a bug. These tests exist to make that failure loud.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -347,3 +348,42 @@ def test_arbitrary_vpa_local_parts_do_not_crash_the_encoder(local):
 
     assert 0.0 <= out["receiver_digit_ratio"] <= 1.0
     assert out["receiver_local_len"] == len(local)
+
+
+# --------------------------------------------------------------------------- #
+# Generator determinism
+# --------------------------------------------------------------------------- #
+def test_the_city_pool_does_not_depend_on_hash_ordering():
+    """The sender city pool must be built in a stable order.
+
+    It was `list({fake.city() for _ in range(60)})`. A set of strings iterates in an
+    order that depends on PYTHONHASHSEED, which CPython randomises per process, and the
+    probability weights applied to that list are positional - so every run drew from a
+    differently-weighted set of cities. `sender_city` is a model feature, which made two
+    seeded runs of a generator documented as reproducible produce different datasets.
+
+    Read against the source rather than by running the generator twice: a same-process
+    test cannot see the effect, because the hash seed is fixed for the life of a process.
+    """
+    source = (Path(__file__).resolve().parent.parent / "generate_upi_dataset.py").read_text(
+        encoding="utf-8"
+    )
+    assert "sorted({fake.city()" in source, (
+        "the city pool must be sorted; an unordered set makes the dataset "
+        "depend on PYTHONHASHSEED"
+    )
+    assert "list({fake.city()" not in source
+
+
+def test_transaction_ids_come_from_the_seeded_generator():
+    """`uuid.uuid4()` reads os.urandom and ignores every seed in the module.
+
+    With it, no two runs of the generator ever produced the same file, so nothing
+    downstream could be reproduced byte for byte - including the artifacts the README
+    quotes numbers from.
+    """
+    source = (Path(__file__).resolve().parent.parent / "generate_upi_dataset.py").read_text(
+        encoding="utf-8"
+    )
+    assert "uuid.uuid4()" not in source, "transaction ids must be drawn from the seeded rng"
+    assert "uuid.UUID(bytes=bytes(ids_rng.bytes(16))" in source

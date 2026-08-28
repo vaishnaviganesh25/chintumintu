@@ -30,6 +30,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import platform
 import re
@@ -1482,6 +1483,11 @@ def main() -> None:
         },
         "dataset": {
             "file": DATA_CSV.name,
+            # The exact bytes this model was fitted on. Two runs that produced the same
+            # dataset must produce the same model; two runs that did not are not
+            # comparable, and a drift check that ignores the difference is measuring
+            # library versions rather than the pipeline.
+            "sha256": hashlib.sha256(DATA_CSV.read_bytes()).hexdigest(),
             "rows": len(df),
             "fraud_rows": int(y.sum()),
             "fraud_rate": float(fraud_rate),

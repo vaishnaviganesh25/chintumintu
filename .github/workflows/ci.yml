@@ -50,6 +50,12 @@ jobs:
         # Catches a broken import in the API module without paying for a full train.
         run: python -c "import main, audit_store, chargeback_agent, degradation, merchant_policy"
 
+      - name: README matches the committed artifacts
+        # Exact check, against models/ and reports/ as committed. This is the question a
+        # reader actually has - does the prose describe the model that shipped - and it
+        # needs no retrain, so it runs on every push.
+        run: python verify_claims.py --verbose
+
   end-to-end:
     name: End to end (trains the model)
     runs-on: ubuntu-latest
@@ -70,11 +76,26 @@ jobs:
       - name: Install
         run: pip install -r requirements-dev.txt
 
+      - name: Keep the committed artifacts to compare against
+        run: |
+          mkdir -p /tmp/committed
+          git show HEAD:models/model_config.json > /tmp/committed/model_config.json
+          git show HEAD:reports/evaluation_report.txt > /tmp/committed/evaluation_report.txt
+
       - name: Generate, train, explain
         run: |
           python generate_upi_dataset.py
           python train_model.py
           python explain_model.py
+
+      - name: The dataset is byte-reproducible
+        # The generator was documented as seeded and was not: a set comprehension left
+        # the city pool in PYTHONHASHSEED order, and transaction ids came from uuid4.
+        # Regenerating under a different hash seed must now produce the same bytes.
+        run: |
+          sha256sum upi_synthetic_data.csv > /tmp/first.sha256
+          PYTHONHASHSEED=31337 python generate_upi_dataset.py
+          sha256sum -c /tmp/first.sha256
 
       - name: Verify the saved artifacts round-trip
         run: python predict_example.py
@@ -82,11 +103,12 @@ jobs:
       - name: Full suite, including the tests that need the model
         run: pytest -q
 
-      - name: README claims still match the artifacts just produced
-        # The numbers in the README are re-derived from models/ and reports/ and
-        # compared against the prose. Stale documentation fails the build here rather
-        # than being discovered by a reader.
-        run: python verify_claims.py --verbose
+      - name: The retrain lands where the committed artifacts did
+        # Not an exact match: this stack is not pinned to bitwise reproducibility across
+        # operating systems and library builds, so demanding identical digits would flap
+        # forever. The limits are sized against a real failure - see DRIFT_LIMITS in
+        # verify_claims.py - so a dataset bug fails loudly and float noise does not.
+        run: python verify_claims.py --compare-to /tmp/committed
 
       - name: Keep the evaluation report
         uses: actions/upload-artifact@v4

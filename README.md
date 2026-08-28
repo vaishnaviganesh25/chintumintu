@@ -28,13 +28,13 @@ docker compose up --build      # dashboard :5173  ·  API docs :8080/docs
 
 |  |  |
 | --- | --- |
-| **Detection** | PR-AUC **0.9979** on a test split grouped so no scam incident straddles the boundary |
-| **What it saves** | **₹99,548** of merchant loss per 20,000 payments, against **₹185,410** for a single block/allow threshold |
+| **Detection** | PR-AUC **0.9975** on a test split grouped so no scam incident straddles the boundary |
+| **What it saves** | **₹102,887** of merchant loss per 20,000 payments, against **₹242,553** for a single block/allow threshold |
 | **Priced, not thresholded** | Each payment is costed as ACCEPT / CHALLENGE / HOLD and the cheapest wins — unless cross-merchant evidence escalates it, in which case the console says so. A threshold on a score is the baseline this beats, not the design |
-| **Graph layer** | Fan-in and decayed collection velocity recover **60%** of the ground lost by dropping account age — PR-AUC 0.8788 → 0.9506 |
+| **Graph layer** | Fan-in and decayed collection velocity recover **60%** of the ground lost by dropping account age — PR-AUC 0.8808 → 0.9506 |
 | **Honesty** | Grouping the split *cost* headline performance, and it stayed grouped. Every feature block has an ablation in the run report |
 | **Resilience** | Four rungs of degradation — kill the model and it still scores, marks itself `degraded`, and never fabricates a probability |
-| **Tested** | **279** Python + **74** TypeScript, including property-based tests and a packaging guard |
+| **Tested** | **281** Python + **74** TypeScript, including property-based tests and a packaging guard |
 
 ## How it fits together
 
@@ -116,8 +116,8 @@ npm run dev                       # console on http://localhost:5173
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                            # 279 tests
-pytest -m "not slow"              # 242 of them, no model artifacts needed
+pytest                            # 281 tests
+pytest -m "not slow"              # 244 of them, no model artifacts needed
 ruff check .                      # lint; configured in pyproject.toml
 python verify_claims.py           # every number below, re-derived from the artifacts
 python -m bandit -q -r . -x ./finguard-dashboard,./tests
@@ -125,6 +125,14 @@ python -m pip_audit -r requirements.txt
 
 cd finguard-dashboard && npm run test:run    # 74 tests
 ```
+
+The generator is byte-reproducible: `python generate_upi_dataset.py` twice, under any
+`PYTHONHASHSEED`, produces the same CSV. That was not true until CI caught it — the city
+pool was built from a set comprehension, whose iteration order CPython randomises per
+process, and the weights applied to it are positional. `sender_city` is a model feature,
+so two seeded runs of a generator documented as reproducible built different datasets.
+Transaction ids came from `uuid.uuid4()`, which ignores every seed in the file. Both are
+fixed and guarded by tests.
 
 `verify_claims.py` is the unusual one. Every headline figure in this file is re-derived
 from `models/model_config.json` and `reports/evaluation_report.txt` and compared against
@@ -326,27 +334,28 @@ Random Forest wins on cross-validated PR-AUC and is the shipped model.
 
 | Model | PR-AUC (CV) | PR-AUC (test) | ROC-AUC (test) | F1 (test) |
 | --- | --- | --- | --- | --- |
-| **Random Forest** | **0.9973 ± 0.0016** | **0.9979** | 1.0000 | 0.9474 |
-| XGBoost | 0.9955 ± 0.0038 | 0.9931 | 1.0000 | 0.9140 |
+| **Random Forest** | **0.9976 ± 0.0013** | **0.9975** | 1.0000 | 0.9189 |
+| XGBoost | 0.9961 ± 0.0040 | 0.9952 | 1.0000 | 0.9140 |
 
-The gap between them is 0.0018, well inside XGBoost's own fold spread — so this is a
+The gap between them is 0.0015, well inside XGBoost's own fold spread — so this is a
 preference, not a verdict. Random Forest ships because its folds are tighter, not
 because it is meaningfully better.
 
-At the shipped cost-calibrated threshold of **0.2682**, the held-out set gives
-**precision 0.8919, recall 0.9900**: 99 of 100 frauds caught for 12 false alarms across
-19,900 legitimate payments. The report prints the default-threshold confusion matrix
-beside it, and notes plainly that on this particular split 0.50 happens to score higher —
-the calibrated point is chosen on expected rupees, not on F1.
+At the shipped cost-calibrated threshold of **0.1234**, the held-out set gives
+**precision 0.7463, recall 1.0000**: every one of the 100 frauds caught, for 34 false
+alarms across 19,900 legitimate payments. The report prints the default-threshold
+confusion matrix beside it, and notes plainly that on this split 0.50 scores higher on
+F1 — the calibrated point is chosen on expected rupees, not on F1, and it is the point
+that lets nothing through.
 
 Recall by scam signature, at that threshold:
 
 | Signature | Caught | Recall | Value at risk |
 | --- | --- | --- | --- |
+| `new_vpa_velocity` | 30 / 30 | 100% | ₹1,744,701 |
 | `odd_hour_phishing` | 30 / 30 | 100% | ₹1,203,678 |
 | `rupee_1_test` — the ₹1 probe | 20 / 20 | 100% | ₹20 |
 | `rupee_1_test` — the drain behind it | 20 / 20 | 100% | ₹1,369,795 |
-| `new_vpa_velocity` | 29 / 30 | 96.7% | ₹1,744,701 |
 
 ### Three findings worth reading before trusting those numbers
 
@@ -355,7 +364,7 @@ and its derivatives are still the largest single block of importance, and they s
 be — every fraudulent receiver in this data really is 0–20 days old. What changed is
 that Module 1 routes a slice of legitimate traffic to brand-new VPAs, so the rule
 "receiver is new" is only ~7% precise on its own, and even amount-plus-age tops out at
-62%. The built-in ablation retrains without the age block: PR-AUC falls **0.9979 →
+62%. The built-in ablation retrains without the age block: PR-AUC falls **0.9975 →
 0.9506**.
 
 Read PR-AUC there, not recall. Each ablation row re-calibrates its threshold on its own
@@ -376,10 +385,10 @@ What it cost is measured in [What the group-aware split cost](#what-the-group-aw
 **The obvious threshold policy is not the profitable one here.** "Maximise precision
 subject to recall ≥ 90%" is the natural reading of the requirement, but the 90% floor
 sits below what this model achieves, so the rule is free to climb the threshold and
-trade fraud for precision. Out-of-fold it buys **+13.7 points of precision and 64 fewer
-alarms** by letting **25 more of 400 fraud rows through**. Charging each missed fraud its
-actual amount and each false alarm a ₹150 review, that is **₹1,151,152** of expected loss
-against **₹25,982** at the cost-minimising point — a 44× difference.
+trade fraud for precision. Out-of-fold it buys **+27.3 points of precision and 151 fewer
+alarms** by letting **23 of 400 fraud rows through**. Charging each missed fraud its
+actual amount and each false alarm a ₹150 review, that is **₹1,033,238** of expected loss
+against **₹22,800** at the cost-minimising point — a 45× difference.
 
 `train_model.py` therefore implements both rules and ships the cost-minimising one
 (`THRESHOLD_POLICY = "cost"`). Set it to `"precision_at_recall"` for the literal policy;
@@ -694,21 +703,23 @@ train/test boundary.
 | --- | --- | --- |
 | Test fraud sharing a receiver with training fraud | 59 / 100 | **0 / 100** |
 | Test fraud on a receiver never seen in training | 41 / 100 | **100 / 100** |
-| PR-AUC (test) | 0.9997 | **0.9979** |
-| Recall on those unseen receivers | 100% | **99%** |
-| Cross-validated PR-AUC | 0.9973 ± 0.0027 | **0.9973 ± 0.0016** |
+| PR-AUC (test) | 0.9994 | **0.9975** |
+| Recall on those unseen receivers | 100% | **100%** |
+| Cross-validated PR-AUC | 0.9975 ± 0.0029 | **0.9976 ± 0.0013** |
 
-The headline figure falls, but the cohort it is measured on changes more than the figure
-does — and that is the part worth reading. Under a stratified split the ₹1 probe lands in
-train while its drain lands in test, and one mule VPA is scattered across both, so 59 of
-100 test frauds arrive at a receiver the model has already been taught is fraudulent.
-Only 41 rows are a real test of generalisation. Grouping makes all 100 real, and the
-`100%` recall becomes `99%` measured against two and a half times as many rows.
+The headline test figure falls, but the cohort it is measured on changes more than the
+figure does — and that is the part worth reading. Under a stratified split the ₹1 probe
+lands in train while its drain lands in test, and one mule VPA is scattered across both,
+so 59 of 100 test frauds arrive at a receiver the model has already been taught is
+fraudulent. Only 41 rows are a real test of generalisation. Grouping makes all 100 real.
 
-Cross-validated PR-AUC does not move at all — 0.9973 under both — but the spread across
-folds tightens from ±0.0027 to ±0.0016. So the leak shows up as variance between folds
-rather than as a flattered mean, which is the more useful thing to know: a single CV
-number would have hidden it entirely.
+Recall on unseen receivers is 100% either way, which is the honest reading: on this
+dataset the model does generalise to receivers it has never seen. What the stratified
+split was inflating was the *margin*, not the outcome — and the cross-validated mean
+does not move at all (0.9975 against 0.9976) while the spread across folds more than
+halves, from ±0.0029 to ±0.0013. The leak showed up as variance between folds rather
+than as a flattered mean, which is the more useful thing to know: a single CV number
+would have hidden it entirely.
 
 `GROUP_AWARE_SPLIT = False` reproduces the old behaviour if you want to see the gap
 yourself. The cross-validation inside model selection and threshold calibration is
@@ -739,17 +750,17 @@ allows; a two-outcome policy leaves that option on the table.
 
 | Policy | Total cost | Per txn | Held | Challenged | Fraud through |
 | --- | --- | --- | --- | --- | --- |
-| block / allow at 0.2682 | ₹185,410 | ₹9.27 | 111 | — | 1 |
-| **accept / step-up / hold** | **₹99,548** | **₹4.98** | 81 | 735 | 0 |
+| block / allow at 0.1234 | ₹242,553 | ₹12.13 | 134 | — | 0 |
+| **accept / step-up / hold** | **₹102,887** | **₹5.14** | 78 | 840 | 0 |
 
-Adding the challenge action saves **₹85,862 per 20,000 payments — 46% of merchant
-loss** — while cutting manual holds from 111 to 81 *and* catching the one fraud the
-single threshold let through.
+Adding the challenge action saves **₹139,666 per 20,000 payments — 58% of merchant
+loss** — while cutting manual holds from 134 to 78. Both policies catch everything at
+this threshold; the saving is entirely in what the intervention costs.
 
-Run ungrouped, the same comparison reads 79%. The two are not directly comparable and
-the larger number is not the better one: each run calibrates its own threshold, and the
-ungrouped baseline landed at 0.1043 against 0.2682 here, so it is a different — and much
-more trigger-happy — block/allow policy being beaten.
+Run ungrouped, the same comparison reads 79% (₹383,838 against ₹80,565). The two are not
+directly comparable and the larger number is not the better one: each run calibrates its
+own threshold, and the ungrouped baseline landed at 0.1038 against 0.1234 here, against a
+model whose leaked receivers made the single-threshold policy look far worse than it is.
 
 ### The step-up budget, and why it exists
 
@@ -758,8 +769,8 @@ anything carrying more than a fraction of a percent of risk. On a book with diff
 scores that reached **94% of legitimate traffic** — arithmetically optimal, and it
 would destroy conversion. Friction is a portfolio resource, not a per-row one, so it
 is capped at 10% of payments and spent on the rows where a challenge saves the most.
-The shipped policy spends **3.67% of payments** on challenges — just over a third
-of the allowance, with headroom left.
+The shipped policy spends **4.20% of payments** on challenges — a little over
+four tenths of the allowance, with headroom left.
 
 That failure was found by a test, not by inspection. `test_the_step_up_budget_is_never_exceeded`
 exists because of it.
@@ -769,7 +780,7 @@ exists because of it.
 Card networks put merchants into a remediation programme above a **1.5% ratio** — Visa
 VAMP since 1 April 2026, down from 2.2%, and Mastercard ECM at the same 1.5% once a
 merchant clears 100 chargebacks in a month. That is a hard operating limit, so it is
-reported — at 0.0150% the shipped policy sits far inside it.
+reported — at 0.0173% the shipped policy sits far inside it.
 
 Two caveats the single ratio cannot carry. VAMP's numerator is reported fraud *plus*
 disputes over settled card-not-present volume, so a disputes-only figure sits under what
@@ -936,14 +947,14 @@ the structure, not the structure.
 
 | Feature set | PR-AUC | Recall | Precision |
 | --- | --- | --- | --- |
-| Everything | 0.9979 | 0.99 | 0.89 |
-| Without receiver VPA age | 0.9506 | 0.86 | 0.86 |
+| Everything | 0.9975 | 1.00 | 0.75 |
+| Without receiver VPA age | 0.9506 | 0.85 | 0.86 |
 | Without graph features | 0.9675 | 0.82 | 0.98 |
-| Without either | 0.8788 | 0.92 | 0.59 |
+| Without either | 0.8808 | 0.91 | 0.54 |
 
 Priced against the **age-ablated** model rather than the full one, because the full
 model is close to saturated and improving it proves nothing. With account age removed,
-adding fan-in and collection velocity moves PR-AUC 0.8788 → 0.9506
+adding fan-in and collection velocity moves PR-AUC 0.8808 → 0.9506
 — recovering 60% of the ground lost by dropping account age altogether.
 
 *Read PR-AUC, not recall.* Each row is re-calibrated on its own out-of-fold
@@ -1283,8 +1294,8 @@ leg 1 clear and leg 2 get held citing *gap since the sender's previous payment* 
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                     # 279 tests
-pytest -m "not slow"       # 242 of them; the rest need models/ on disk
+pytest                     # 281 tests
+pytest -m "not slow"       # 244 of them; the rest need models/ on disk
 cd finguard-dashboard && npm run test:run    # 74 tests
 ```
 

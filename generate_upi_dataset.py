@@ -228,7 +228,12 @@ def make_merchant_vpa(fake: Faker, rng: np.random.Generator, used: set[str]) -> 
 # --------------------------------------------------------------------------- #
 def build_sender_pool(fake: Faker, rng: np.random.Generator, used: set[str]) -> pd.DataFrame:
     """Senders are ordinary retail customers with a home city and an activity weight."""
-    faker_cities = list({fake.city() for _ in range(60)})
+    # `sorted`, not `list`. A set of strings iterates in an order that depends on
+    # PYTHONHASHSEED, which CPython randomises per process, so `list({...})` handed back
+    # a differently-ordered city pool on every run. The weights below are positional, so
+    # that reordering changed which cities were common - and `sender_city` is a model
+    # feature. Two seeded runs produced different datasets because of this line.
+    faker_cities = sorted({fake.city() for _ in range(60)})
     cities = METRO_CITIES + faker_cities
     city_p = np.array([8.0] * len(METRO_CITIES) + [1.0] * len(faker_cities))
     city_p /= city_p.sum()
@@ -770,8 +775,17 @@ def finalize(df: pd.DataFrame, rng: np.random.Generator | None = None) -> pd.Dat
     df["time_since_last_txn_sec"] = gap.fillna(-1).round().astype("int64")  # -1 = first txn seen
 
     df = df.sort_values("timestamp", kind="mergesort").reset_index(drop=True)
-    df["transaction_id"] = [str(uuid.uuid4()) for _ in range(len(df))]
-    df = enrich_merchant_context(df, rng if rng is not None else np.random.default_rng(SEED))
+
+    # Resolved once: the ids and the merchant context must come from the same seeded
+    # stream, and `rng` is optional on this function.
+    ids_rng = rng if rng is not None else np.random.default_rng(SEED)
+    # uuid4() reads os.urandom and ignores every seed in this file, which made the
+    # output byte-different on every run even once the city pool was stable. Drawing the
+    # 16 bytes from the seeded generator keeps the UUID shape and the reproducibility.
+    df["transaction_id"] = [
+        str(uuid.UUID(bytes=bytes(ids_rng.bytes(16)), version=4)) for _ in range(len(df))
+    ]
+    df = enrich_merchant_context(df, ids_rng)
     return df[COLUMNS]
 
 
